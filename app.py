@@ -2,193 +2,215 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
-import os
-
-# --- NLTK SETUP ---
-import nltk
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-
-nltk_data_path = os.path.join(os.getcwd(), "nltk_data")
-if not os.path.exists(nltk_data_path):
-    os.makedirs(nltk_data_path)
-nltk.data.path.append(nltk_data_path)
-try:
-    nltk.data.find('sentiment/vader_lexicon.zip')
-except LookupError:
-    nltk.download('vader_lexicon', download_dir=nltk_data_path)
+from datetime import datetime
+from fpdf import FPDF
+import tempfile
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(
-    page_title="FOREX | Pro Terminal",
-    page_icon="💹",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+st.set_page_config(layout="wide", page_title="EquiReport | AI Analyst", page_icon="📑")
 
-# --- CUSTOM CSS ---
+# --- CUSTOM CSS (On-Screen Display) ---
 st.markdown("""
     <style>
-        .stApp { background-color: #121212; color: #FFFFFF; }
-        [data-testid="stSidebar"] { background-color: #000000; border-right: 1px solid #333; }
-        .neon-text { color: #C6F221; font-weight: bold; }
-        
-        /* Custom Metric Card */
-        div[data-testid="metric-container"] {
-            background-color: #1E1E1E;
-            border-left: 4px solid #C6F221;
-            padding: 10px;
-            border-radius: 5px;
+        .stApp { background-color: #0E1117; color: #FAFAFA; font-family: 'Helvetica', sans-serif; }
+        .report-container {
+            background-color: #161B22;
+            padding: 30px;
+            border-radius: 10px;
+            border: 1px solid #30363D;
+            margin-bottom: 20px;
         }
-        
-        /* Ticker Tape */
-        .ticker-wrap {
-            width: 100%; overflow: hidden; background-color: #000;
-            padding: 10px 0; white-space: nowrap; border-bottom: 1px solid #333;
+        .rating-badge {
+            padding: 5px 15px; border-radius: 5px; font-weight: bold; font-size: 1.2rem; display: inline-block;
         }
-        .ticker { display: inline-block; animation: marquee 40s linear infinite; }
-        .ticker-item { display: inline-block; padding: 0 2rem; font-size: 1.1rem; color: #C6F221; font-family: monospace; }
-        @keyframes marquee { 0% { transform: translate(0, 0); } 100% { transform: translate(-100%, 0); } }
+        .buy { background-color: #238636; color: white; }
+        .sell { background-color: #DA3633; color: white; }
+        .hold { background-color: #D29922; color: black; }
+        h1, h2, h3 { color: #58A6FF; }
+        .metric-label { font-size: 0.9rem; color: #8B949E; }
+        .metric-value { font-size: 1.5rem; font-weight: bold; color: #C9D1D9; }
+        hr { border: 0; border-top: 1px solid #30363D; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS ---
+# --- LOGIC ENGINE (THE "AI") ---
+class ReportEngine:
+    def __init__(self, df, info):
+        self.df = df
+        self.info = info
+        self.close = df['Close'].iloc[-1]
+        self.sma200 = df['Close'].rolling(200).mean().iloc[-1]
+    
+    def get_rating(self):
+        score = 0
+        if self.close > self.sma200: score += 1
+        if self.info.get('forwardPE', 20) < 25: score += 1
+        if self.info.get('profitMargins', 0) > 0.10: score += 1
+        
+        if score == 3: return "STRONG BUY", "buy"
+        elif score == 2: return "BUY", "buy"
+        elif score == 1: return "HOLD", "hold"
+        else: return "SELL", "sell"
 
-def get_ticker_tape():
-    try:
-        tickers = ['EURUSD=X', 'GBPUSD=X', 'JPY=X', 'BTC-USD', 'ETH-USD', 'GC=F']
-        data = yf.download(tickers, period="1d", interval="1d", progress=False)['Close'].iloc[-1]
-        html = ""
-        if isinstance(data, pd.Series):
-             for t, p in data.items(): html += f"<span class='ticker-item'>{t}: ${p:,.4f}</span>"
-        else: html = f"<span class='ticker-item'>Loading Market Data...</span>"
-        return f"<div class='ticker-wrap'><div class='ticker'>{html}{html}</div></div>"
-    except: return ""
+    def generate_thesis(self):
+        reasons = []
+        pe = self.info.get('trailingPE')
+        if pe:
+            if pe < 15: reasons.append(f"Undervalued: P/E is {pe:.2f}.")
+            elif pe > 50: reasons.append(f"Premium Valuation: P/E is {pe:.2f}.")
+            else: reasons.append(f"Fair Valuation: P/E is {pe:.2f}.")
+        
+        if self.close > self.sma200: reasons.append("Technical Uptrend: Trading above 200-day Moving Average.")
+        else: reasons.append("Technical Downtrend: Trading below 200-day Moving Average.")
+        
+        margins = self.info.get('profitMargins', 0)
+        reasons.append(f"Profitability: {margins*100:.1f}% net margins.")
+        
+        return "\n".join(reasons)
 
+    def get_risks(self):
+        risks = []
+        if self.info.get('beta', 1.0) > 1.5: risks.append("High Volatility (Beta > 1.5)")
+        if self.info.get('debtToEquity', 0) > 150: risks.append("High Leverage (Debt/Eq > 150)")
+        if self.info.get('shortRatio', 0) > 5: risks.append("High Short Interest")
+        if not risks: risks.append("No major automated risks detected.")
+        return risks
+
+# --- PDF GENERATOR CLASS ---
+class PDFReport(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 15)
+        self.cell(0, 10, 'Equity Research Report', 0, 1, 'C')
+        self.ln(5)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
+
+    def chapter_title(self, title):
+        self.set_font('Arial', 'B', 12)
+        self.set_fill_color(200, 220, 255)
+        self.cell(0, 6, title, 0, 1, 'L', 1)
+        self.ln(4)
+
+    def chapter_body(self, body):
+        self.set_font('Arial', '', 10)
+        self.multi_cell(0, 5, body)
+        self.ln()
+
+def create_pdf(ticker, info, rating, thesis, risks, metrics):
+    pdf = PDFReport()
+    pdf.add_page()
+    
+    # Title Section
+    pdf.set_font('Arial', 'B', 16)
+    pdf.cell(0, 10, f"{info.get('longName', ticker)} ({ticker})", 0, 1, 'L')
+    pdf.set_font('Arial', '', 12)
+    pdf.cell(0, 10, f"Recommendation: {rating}", 0, 1, 'L')
+    pdf.cell(0, 10, f"Current Price: ${info.get('currentPrice', 'N/A')}", 0, 1, 'L')
+    pdf.ln(5)
+    
+    # Thesis
+    pdf.chapter_title("Investment Thesis")
+    pdf.chapter_body(thesis)
+    
+    # Ratios
+    pdf.chapter_title("Key Financial Ratios")
+    ratio_text = ""
+    for k, v in metrics.items():
+        ratio_text += f"{k}: {v}\n"
+    pdf.chapter_body(ratio_text)
+    
+    # Risks
+    pdf.chapter_title("Key Risks")
+    risk_text = "\n".join([f"- {r}" for r in risks])
+    pdf.chapter_body(risk_text)
+    
+    # Disclaimer
+    pdf.ln(10)
+    pdf.set_font('Arial', 'I', 8)
+    pdf.multi_cell(0, 5, "Disclaimer: This report is generated by an AI algorithm for educational purposes only. Not financial advice.")
+    
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- MAIN APP ---
 @st.cache_data
-def get_data(symbol, start, end):
+def load_data(symbol):
     try:
-        df = yf.download(symbol, start=start, end=end, progress=False)
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="2y")
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        return df
-    except: return None
+        return df, ticker.info
+    except: return None, None
 
-def analyze_sentiment(news_list):
-    if not news_list: return 0, "Neutral ⚪"
-    sia = SentimentIntensityAnalyzer()
-    scores = [sia.polarity_scores(a.get('title',''))['compound'] for a in news_list]
-    avg = sum(scores) / len(scores) if scores else 0
-    if avg > 0.05: return avg, "Bullish 🟢"
-    elif avg < -0.05: return avg, "Bearish 🔴"
-    else: return avg, "Neutral ⚪"
-
-# --- SIDEBAR ---
+# Sidebar
 with st.sidebar:
-    st.markdown("<h1 class='neon-text'>FOREX Terminal</h1>", unsafe_allow_html=True)
-    symbol = st.text_input("Symbol", "EURUSD=X").upper()
-    col1, col2 = st.columns(2)
-    start_date = col1.date_input("Start", datetime.now() - timedelta(days=365))
-    end_date = col2.date_input("End", datetime.now())
-    st.markdown("### 🛠 Tools")
-    show_rsi = st.checkbox("Show RSI (14)", value=True)
-    compare_sym = st.text_input("Compare (e.g. GBPUSD=X)")
+    st.header("EquiReport Engine")
+    symbol = st.text_input("Enter Ticker (e.g. AAPL, RELIANCE.NS)", "AAPL").upper()
+    if st.button("Generate Report"):
+        st.cache_data.clear()
 
-st.markdown(get_ticker_tape(), unsafe_allow_html=True)
-
-# --- MAIN LOGIC ---
-df = get_data(symbol, start_date, end_date)
-ticker_obj = yf.Ticker(symbol)
+df, info = load_data(symbol)
 
 if df is not None and not df.empty:
-    try: info = ticker_obj.info
-    except: info = {}
-    try: news = ticker_obj.news
-    except: news = []
+    engine = ReportEngine(df, info)
+    rating_text, rating_class = engine.get_rating()
+    thesis_text = engine.generate_thesis()
+    risks_list = engine.get_risks()
     
-    # DETECT ASSET TYPE
-    # If quoteType is missing, assume it's NOT a stock (safest default)
-    quote_type = info.get('quoteType', 'CURRENCY') 
-    is_stock = quote_type == 'EQUITY'
-    
-    # 1. HEADER
-    c1, c2 = st.columns([3, 1])
+    # Prepare Metrics for Display & PDF
+    metrics_dict = {
+        "P/E Ratio": f"{info.get('trailingPE', 'N/A')}",
+        "Forward P/E": f"{info.get('forwardPE', 'N/A')}",
+        "Market Cap": f"${info.get('marketCap',0)/1e9:.2f} B",
+        "Beta": f"{info.get('beta', 'N/A')}"
+    }
+
+    # --- UI DISPLAY ---
+    st.markdown(f"""
+    <div class="report-container">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div><h1 style="margin:0;">{info.get('longName', symbol)}</h1></div>
+            <div><span class="rating-badge {rating_class}">{rating_text}</span></div>
+        </div>
+        <hr>
+        <p><b>Investment Thesis:</b><br>{thesis_text.replace(chr(10), '<br>')}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    c1, c2 = st.columns([2, 1])
     with c1:
-        st.title(info.get('shortName', symbol))
-        st.caption(f"Type: {quote_type} | Sector: {info.get('sector', 'N/A')}")
-    with c2:
-        score, label = analyze_sentiment(news)
-        st.metric("AI Sentiment", label, f"{score:.2f}")
-
-    # 2. TABS (ADAPTIVE)
-    # Only insert 'Fundamentals' tab if it's actually a stock
-    tabs = ["📈 Chart", "📰 News & AI"]
-    if is_stock: tabs.insert(1, "🏗 Fundamentals")
-    
-    active_tabs = st.tabs(tabs)
-    
-    # TAB: CHART (Index 0)
-    with active_tabs[0]:
-        rows = 2 if show_rsi else 1
-        fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3] if show_rsi else [1])
-        
-        # Main Price
-        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'],
-                                     name="Price", increasing_line_color='#C6F221', decreasing_line_color='#FF3B30'), row=1, col=1)
-        
-        # Comparison
-        if compare_sym:
-            comp_df = get_data(compare_sym, start_date, end_date)
-            if comp_df is not None:
-                fig.add_trace(go.Scatter(x=comp_df.index, y=comp_df['Close'], line=dict(color='white', width=1, dash='dot'),
-                                         name=f"Vs {compare_sym}"), row=1, col=1)
-
-        # RSI
-        if show_rsi:
-            delta = df['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            fig.add_trace(go.Scatter(x=df.index, y=rsi, line=dict(color='#AB47BC', width=2), name="RSI"), row=2, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
-            fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-            
-        fig.update_layout(template="plotly_dark", height=600, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor='#1E1E1E')
+        # Chart
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='#58A6FF')))
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(200).mean(), name='200 DMA', line=dict(color='orange', dash='dash')))
+        fig.update_layout(height=350, template="plotly_dark", margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
 
-    # TAB: FUNDAMENTALS (Only if Stock)
-    if is_stock:
-        with active_tabs[1]:
-            c1, c2 = st.columns(2)
-            with c1:
-                st.subheader("Balance Sheet")
-                # Show last 2 reports
-                st.dataframe(ticker_obj.balance_sheet.iloc[:, :2], height=300, use_container_width=True)
-            with c2:
-                st.subheader("Insider Trading")
-                st.dataframe(ticker_obj.insider_transactions.head(10), height=300, use_container_width=True)
-            
-            st.markdown("---")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("P/E Ratio", info.get('trailingPE', 'N/A'))
-            k2.metric("Market Cap", f"${info.get('marketCap', 0):,}")
-            k3.metric("Profit Margin", f"{info.get('profitMargins', 0)*100:.2f}%")
-            k4.metric("Rev Growth", f"{info.get('revenueGrowth', 0)*100:.2f}%")
+    with c2:
+        # Metrics & Risks
+        st.markdown('<div class="report-container">', unsafe_allow_html=True)
+        st.subheader("Key Data")
+        for k, v in metrics_dict.items():
+            st.write(f"**{k}:** {v}")
+        st.markdown("---")
+        st.subheader("Risks")
+        for r in risks_list:
+            st.write(f"⚠️ {r}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # TAB: NEWS (Always Last)
-    news_tab_index = 2 if is_stock else 1
-    with active_tabs[news_tab_index]:
-        if news:
-            for article in news[:7]:
-                score = SentimentIntensityAnalyzer().polarity_scores(article.get('title',''))['compound']
-                mood = "🟢" if score > 0.05 else "🔴" if score < -0.05 else "⚪"
-                with st.container():
-                    st.markdown(f"**{mood} [{article.get('title')}]({article.get('link')})**")
-                    st.caption(f"Source: {article.get('publisher')} | Score: {score:.2f}")
-                    st.markdown("---")
-        else:
-            st.warning("No specific news found for this symbol (Common for Crypto/Forex).")
+    # --- PDF DOWNLOAD BUTTON ---
+    # Create the PDF bytes
+    pdf_bytes = create_pdf(symbol, info, rating_text, thesis_text, risks_list, metrics_dict)
+    
+    st.download_button(
+        label="📄 Download PDF Report",
+        data=pdf_bytes,
+        file_name=f"{symbol}_Research_Report.pdf",
+        mime="application/pdf",
+        use_container_width=True
+    )
 
 else:
-    st.error("Data not found. Try 'AAPL' for Stocks or 'BTC-USD' for Crypto.")
+    st.error("Ticker not found. For Indian stocks, add .NS (e.g., RELIANCE.NS, TATASTEEL.NS). For US stocks use just the symbol (e.g., AAPL).")
