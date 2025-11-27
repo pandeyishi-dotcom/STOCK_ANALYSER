@@ -6,195 +6,185 @@ from datetime import datetime, timedelta
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Paynext | Fintech Research",
+    page_title="Paynext | Pro Research",
     page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS FOR "PAYNEXT" UI/UX ---
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
-        /* Global Background */
-        .stApp {
-            background-color: #F3F4F6;
-        }
+        .stApp { background-color: #F3F4F6; }
+        [data-testid="stSidebar"] { background: linear-gradient(180deg, #2E1065 0%, #4C1D95 100%); color: white; }
+        [data-testid="stSidebar"] * { color: white !important; }
         
-        /* Sidebar Styling - Deep Purple Gradient */
-        [data-testid="stSidebar"] {
-            background: linear-gradient(180deg, #2E1065 0%, #4C1D95 100%);
-            color: white;
-        }
-        [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] label, [data-testid="stSidebar"] span, [data-testid="stSidebar"] p {
-            color: white !important;
-        }
-        
-        /* Metric Cards Styling */
+        /* Metric Cards */
         div[data-testid="metric-container"] {
             background-color: white;
-            padding: 15px 20px;
+            padding: 15px;
             border-radius: 12px;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
             border: 1px solid #E5E7EB;
-            min-height: 100px;
         }
         
-        /* Headers */
-        h1, h2, h3 {
-            font-family: 'Inter', sans-serif;
-            color: #1F2937;
-            font-weight: 700;
+        /* Tabs Styling */
+        .stTabs [data-baseweb="tab-list"] { gap: 24px; }
+        .stTabs [data-baseweb="tab"] {
+            height: 50px;
+            white-space: pre-wrap;
+            background-color: white;
+            border-radius: 5px;
+            color: #4C1D95;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
-        
-        /* AI Assistant Box */
-        .ai-box {
-            background: linear-gradient(135deg, #7C4DFF 0%, #6200EA 100%);
+        .stTabs [aria-selected="true"] {
+            background-color: #7C4DFF;
             color: white;
-            padding: 20px;
-            border-radius: 15px;
-            margin-top: 20px;
-            box-shadow: 0 4px 10px rgba(124, 77, 255, 0.3);
-        }
-        .ai-box h4 {
-            color: white;
-            margin: 0;
-            padding-bottom: 5px;
-        }
-        
-        /* Remove top padding */
-        .block-container {
-            padding-top: 2rem;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# --- SIDEBAR NAVIGATION ---
-with st.sidebar:
-    st.title("Paynext")
-    st.markdown("### Fintech Workspace")
-    
-    # Input Widgets
-    ticker = st.text_input("Enter Stock Symbol", value="AAPL").upper()
-    
-    # Date Slider
-    start_date = st.date_input("Start Date", value=datetime.now() - timedelta(days=365))
-    end_date = st.date_input("End Date", value=datetime.now())
-    
-    st.markdown("---")
-    st.write("Current Mode: **Research**")
-    st.info("AI Assistant Active 🟢")
+# --- HELPER FUNCTIONS ---
 
-# --- DATA FETCHING WITH ERROR FIX ---
 @st.cache_data
 def load_data(symbol, start, end):
+    """Fetch history and company info safely."""
     try:
-        # Download data
-        data = yf.download(symbol, start=start, end=end, progress=False)
+        ticker_obj = yf.Ticker(symbol)
         
-        # --- FIX FOR YFINANCE UPDATE ---
-        # Flatten MultiIndex columns if present (e.g. ('Close', 'AAPL') -> 'Close')
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = data.columns.get_level_values(0)
-        # -------------------------------
+        # 1. Get History
+        df = ticker_obj.history(start=start, end=end)
         
-        return data
-    except Exception as e:
-        st.error(f"Error loading data: {e}")
-        return None
-
-# Load the data
-data = load_data(ticker, start_date, end_date)
-
-# --- MAIN DASHBOARD ---
-
-# Header Section
-col_header_1, col_header_2 = st.columns([3, 1])
-with col_header_1:
-    st.title(f"Financial Overview: {ticker}")
-    st.caption("Real-time data, technical analysis, and AI insights.")
-with col_header_2:
-    st.markdown(f"**Last Updated:**\n{datetime.now().strftime('%Y-%m-%d')}")
-
-if data is not None and not data.empty:
-    # 1. KPI METRICS ROW
-    # Force conversion to float to prevent Formatting Errors
-    try:
-        current_price = float(data['Close'].iloc[-1])
-        prev_price = float(data['Close'].iloc[-2])
-        delta = current_price - prev_price
-        
-        vol_val = int(data['Volume'].iloc[-1])
-        high_val = float(data['High'].max())
-        low_val = float(data['Low'].min())
-        
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-        with col_m1:
-            st.metric("Current Price", f"${current_price:.2f}", f"{delta:.2f}")
-        with col_m2:
-            st.metric("Volume", f"{vol_val:,}")
-        with col_m3:
-            st.metric("High (52W)", f"${high_val:.2f}")
-        with col_m4:
-            st.metric("Low (52W)", f"${low_val:.2f}")
+        # Flatten MultiIndex if necessary
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
             
-    except IndexError:
-        st.warning("Not enough data to calculate changes yet.")
+        # 2. Get Info (Fundamentals)
+        info = ticker_obj.info
+        
+        # 3. Get News
+        news = ticker_obj.news
+        
+        return df, info, news
+    except Exception as e:
+        return None, None, None
+
+def calculate_technical_indicators(df):
+    """Calculate SMA and EMA manually to avoid heavy dependencies."""
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    df['SMA_200'] = df['Close'].rolling(window=200).mean()
+    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+    return df
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.title("Paynext Pro")
+    
+    symbol = st.text_input("Stock Symbol", "AAPL").upper()
+    
+    # Date Range
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start", datetime.now() - timedelta(days=365))
+    with col2:
+        end_date = st.date_input("End", datetime.now())
+        
+    st.markdown("---")
+    st.subheader("Chart Overlay")
+    show_sma = st.checkbox("Show SMA (50 & 200)")
+    show_ema = st.checkbox("Show EMA (20)")
+    
+    st.markdown("---")
+    st.caption("Paynext Financial Studio v2.0")
+
+# --- MAIN LOGIC ---
+df, info, news = load_data(symbol, start_date, end_date)
+
+if df is not None and not df.empty:
+    df = calculate_technical_indicators(df)
+    
+    # --- HEADER & FUNDAMENTALS ---
+    col_h1, col_h2 = st.columns([3, 1])
+    with col_h1:
+        st.title(f"{info.get('longName', symbol)}")
+        st.markdown(f"**Sector:** {info.get('sector', 'N/A')} | **Industry:** {info.get('industry', 'N/A')}")
+    with col_h2:
+        st.metric("Current Price", f"${df['Close'].iloc[-1]:.2f}", 
+                  f"{df['Close'].iloc[-1] - df['Close'].iloc[-2]:.2f}")
+
+    # --- METRICS ROW ---
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Market Cap", f"${info.get('marketCap', 0):,}")
+    m2.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
+    m3.metric("52W High", f"${info.get('fiftyTwoWeekHigh', 0):.2f}")
+    m4.metric("Volume", f"{df['Volume'].iloc[-1]:,}")
 
     st.markdown("---")
 
-    # 2. CHARTS SECTION
-    c1, c2 = st.columns([2, 1])
-    
-    with c1:
-        st.subheader("Technical Analysis")
-        # Plotly Chart
-        fig = go.Figure(data=[go.Candlestick(x=data.index,
-                        open=data['Open'],
-                        high=data['High'],
-                        low=data['Low'],
-                        close=data['Close'],
-                        increasing_line_color= '#00C805', 
-                        decreasing_line_color= '#FF3B30')])
+    # --- TABS FOR ORGANIZED VIEW ---
+    tab_chart, tab_news, tab_data = st.tabs(["📈 Technical Chart", "📰 Latest News", "📊 Historical Data"])
+
+    # TAB 1: ADVANCED CHART
+    with tab_chart:
+        fig = go.Figure()
+
+        # Candlestick
+        fig.add_trace(go.Candlestick(x=df.index,
+                        open=df['Open'], high=df['High'],
+                        low=df['Low'], close=df['Close'],
+                        name='Price'))
+
+        # Add Indicators based on User Selection
+        if show_sma:
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_50'], line=dict(color='orange', width=1), name='SMA 50'))
+            fig.add_trace(go.Scatter(x=df.index, y=df['SMA_200'], line=dict(color='blue', width=1), name='SMA 200'))
         
-        # Update layout to match white card theme
+        if show_ema:
+            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='purple', width=1), name='EMA 20'))
+
         fig.update_layout(
-            height=400, 
-            margin=dict(l=20, r=20, t=20, b=20), 
-            paper_bgcolor="white", 
-            plot_bgcolor="white",
+            height=500,
+            paper_bgcolor='white',
+            plot_bgcolor='white',
             xaxis_rangeslider_visible=False,
-            xaxis=dict(showgrid=True, gridcolor='#F3F4F6'),
-            yaxis=dict(showgrid=True, gridcolor='#F3F4F6')
+            margin=dict(l=20, r=20, t=20, b=20)
         )
         st.plotly_chart(fig, use_container_width=True)
-
-    with c2:
-        st.subheader("Market News & AI")
         
-        # AI Insight Card (HTML Injection)
-        st.markdown(f"""
-        <div class="ai-box">
-            <h4>🤖 Paynext AI Insight</h4>
-            <p style="font-size: 0.9rem; opacity: 0.9;">
-            <b>{ticker}</b> is showing strong bullish momentum based on the last 30 days of trading. 
-            The volume spike suggests institutional interest. Resistance is observed near <b>${data['High'].max():.0f}</b>.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        # Simulated AI Insight based on Simple Logic
+        last_close = df['Close'].iloc[-1]
+        sma_200 = df['SMA_200'].iloc[-1] if not pd.isna(df['SMA_200'].iloc[-1]) else last_close
+        trend = "Bullish 🟢" if last_close > sma_200 else "Bearish 🔴"
         
-        st.markdown("### Recent Headlines")
-        # Mock headlines for UI demonstration
-        st.markdown(f"""
-        * **Breaking:** {ticker} announces new strategic partnership...
-        * **Earnings:** Quarterly revenue beats expectations by 12%.
-        * **Market:** Sector rotation benefits tech stocks like {ticker}.
-        """)
+        st.info(f"**AI Technical Check:** The stock is currently trading **{trend}** relative to its 200-day moving average.")
 
-    # 3. FINANCIAL DATA TABLE
-    st.subheader("Historical Data View")
-    with st.expander("View Detailed Dataframe", expanded=False):
-        # Display sorting by newest date first
-        st.dataframe(data.sort_index(ascending=False), use_container_width=True)
+    # TAB 2: NEWS FEED
+    with tab_news:
+        st.subheader(f"News for {symbol}")
+        if news:
+            for article in news[:5]:  # Show top 5 news
+                with st.container():
+                    st.markdown(f"**[{article['title']}]({article['link']})**")
+                    st.caption(f"Publisher: {article.get('publisher', 'Unknown')} | {datetime.fromtimestamp(article.get('providerPublishTime', 0)).strftime('%Y-%m-%d')}")
+                    st.markdown("---")
+        else:
+            st.write("No news found directly via API.")
+
+    # TAB 3: DATA & DOWNLOAD
+    with tab_data:
+        st.subheader("Raw Data")
+        
+        # Download Button
+        csv = df.to_csv().encode('utf-8')
+        st.download_button(
+            label="Download CSV",
+            data=csv,
+            file_name=f"{symbol}_data.csv",
+            mime="text/csv",
+        )
+        
+        st.dataframe(df.sort_index(ascending=False), use_container_width=True)
 
 else:
-    st.error("No data found. Please check the stock symbol or date range.")
+    st.error("Error loading data. Please check the symbol.")
