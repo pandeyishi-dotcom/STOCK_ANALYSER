@@ -43,13 +43,21 @@ st.markdown("""
         hr { border: 0; border-top: 1px solid #30363D; }
         .neon-text { color: #C6F221; font-weight: bold; text-shadow: 0 0 5px rgba(198, 242, 33, 0.5); }
         
+        /* Macro Widget */
+        .macro-box {
+            background-color: #161B22; border: 1px solid #30363D;
+            padding: 10px; border-radius: 5px; margin-bottom: 10px; text-align: center;
+        }
+        .macro-val { font-size: 1.1rem; font-weight: bold; color: #FAFAFA; }
+        .macro-lbl { font-size: 0.8rem; color: #8B949E; }
+        
         /* Metric Container */
         div[data-testid="metric-container"] {
             background-color: #161B22; border-left: 4px solid #C6F221;
             padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
         
-        /* Scanner Tables */
+        /* Tables */
         .dataframe { font-size: 0.8rem !important; }
         
         /* Report Cards */
@@ -75,6 +83,10 @@ st.markdown("""
         @keyframes marquee { 0% { transform: translate(0, 0); } 100% { transform: translate(-100%, 0); } }
     </style>
 """, unsafe_allow_html=True)
+
+# --- SESSION STATE FOR PORTFOLIO ---
+if 'portfolio' not in st.session_state:
+    st.session_state.portfolio = []
 
 # --- MARKET MAPPING ---
 INDIAN_MARKET_MAP = {
@@ -130,6 +142,16 @@ def fetch_google_news(symbol):
     except: return []
 
 @st.cache_data(ttl=3600)
+def get_macro_data():
+    """Fetches USD/INR, Oil, Gold for the sidebar."""
+    try:
+        # INR=X (USD/INR), CL=F (Crude Oil), GC=F (Gold)
+        tickers = ['INR=X', 'CL=F', 'GC=F']
+        data = yf.download(tickers, period="1d", progress=False)['Close'].iloc[-1]
+        return data
+    except: return None
+
+@st.cache_data(ttl=3600)
 def get_ticker_tape_data():
     try:
         tickers = ['^NSEI', '^BSESN', 'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS']
@@ -151,23 +173,20 @@ def load_historical_data(symbol, start, end):
         return df
     except: return None
 
-# --- NEW: MARKET SCANNER ENGINE ---
+# --- SCANNER ENGINE ---
 def run_market_scanner():
-    """Scans all stocks in the map for technical signals."""
     scan_results = []
-    
-    # Progress Bar
     progress_bar = st.progress(0)
     total = len(INDIAN_MARKET_MAP)
     
     for i, (name, ticker) in enumerate(INDIAN_MARKET_MAP.items()):
         try:
-            # Download minimal data (6 months is enough for scanner)
-            df = yf.download(ticker, period="6mo", progress=False)
+            df = yf.download(ticker, period="1y", progress=False)
             if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
             if not df.empty:
                 close = df['Close'].iloc[-1]
+                high_52 = df['High'].max()
                 
                 # Indicators
                 sma50 = df['Close'].rolling(50).mean().iloc[-1]
@@ -182,22 +201,20 @@ def run_market_scanner():
                 rsi_val = rsi.iloc[-1]
                 
                 # Signals
-                signal = "NEUTRAL"
-                if rsi_val < 30: signal = "OVERSOLD (Buy?)"
-                elif rsi_val > 70: signal = "OVERBOUGHT"
-                elif sma50 > sma200 and close > sma50: signal = "STRONG UPTREND"
-                elif close < sma200: signal = "DOWNTREND"
+                signal = ""
+                if rsi_val < 30: signal = "OVERSOLD"
+                elif close >= 0.95 * high_52: signal = "NEAR 52W HIGH"
+                elif sma50 > sma200: signal = "GOLDEN CROSS"
+                else: signal = "NEUTRAL"
                 
                 scan_results.append({
                     "Stock": name,
                     "Price": f"₹{close:.2f}",
-                    "RSI (14)": round(rsi_val, 1),
-                    "Trend": "Bullish 🟢" if close > sma200 else "Bearish 🔴",
+                    "RSI": round(rsi_val, 1),
+                    "Change": f"{((close - df['Close'].iloc[-2])/df['Close'].iloc[-2])*100:.2f}%",
                     "Signal": signal
                 })
         except: pass
-        
-        # Update progress
         progress_bar.progress((i + 1) / total)
         
     progress_bar.empty()
@@ -242,7 +259,6 @@ class ResearchEngine:
         if self.info.get('earningsGrowth', 0) > 0.20: swot['Opportunities'].append("High Earnings Growth Potential")
         if self.info.get('beta', 1.0) > 1.5: swot['Threats'].append("High Volatility")
         if not swot['Strengths']: swot['Strengths'].append("Stable Market Position")
-        if not swot['Weaknesses']: swot['Weaknesses'].append("Moderate Growth")
         return swot
 
     def get_risk_metrics(self):
@@ -311,11 +327,21 @@ def create_pdf_bytes(ticker, info, rating, swot, risk, intrinsic_val, currency_s
 # =========================================
 with st.sidebar:
     st.markdown("<h1 class='neon-text'>FinTerminal India</h1>", unsafe_allow_html=True)
-    # UPDATED MENU
-    mode = st.radio("Mode:", ["📊 Dashboard", "⚡ Market Scanner", "📑 Report Gen"], label_visibility="collapsed")
+    
+    # --- MACRO WIDGET ---
+    macro = get_macro_data()
+    if macro is not None:
+        c1, c2, c3 = st.columns(3)
+        c1.markdown(f"<div class='macro-box'><div class='macro-lbl'>USD/INR</div><div class='macro-val'>{macro['INR=X']:.2f}</div></div>", unsafe_allow_html=True)
+        c2.markdown(f"<div class='macro-box'><div class='macro-lbl'>Crude</div><div class='macro-val'>{macro['CL=F']:.1f}</div></div>", unsafe_allow_html=True)
+        c3.markdown(f"<div class='macro-box'><div class='macro-lbl'>Gold</div><div class='macro-val'>{macro['GC=F']:.0f}</div></div>", unsafe_allow_html=True)
     st.markdown("---")
     
-    if mode != "⚡ Market Scanner":
+    # NAVIGATION
+    mode = st.radio("Menu:", ["📊 Dashboard", "⚡ Market Scanner", "🆚 Peer Comparison", "💼 Portfolio Sim", "📑 Report Gen"])
+    st.markdown("---")
+    
+    if mode not in ["⚡ Market Scanner", "💼 Portfolio Sim", "🆚 Peer Comparison"]:
         st.markdown("### 🔍 Select Company")
         search_mode = st.checkbox("Manual Ticker Search", value=False)
         if search_mode:
@@ -345,7 +371,6 @@ if mode == "📊 Dashboard":
     try: info = ticker_obj.info
     except: info = {}
     
-    # News Logic
     try: news = ticker_obj.news
     except: news = []
     valid_news = []
@@ -397,23 +422,117 @@ if mode == "📊 Dashboard":
 # =========================================
 elif mode == "⚡ Market Scanner":
     st.title("⚡ AI Market Scanner")
-    st.caption("Scanning 20+ Top Indian Stocks for Technical Signals...")
+    st.caption("Scanning Top Indian Stocks for Signals (Golden Cross, Oversold, 52W High)")
     
     if st.button("Start Scan", type="primary"):
-        with st.spinner("Scanning market data... this may take 20-30 seconds."):
+        with st.spinner("Scanning market data..."):
             scan_df = run_market_scanner()
+            def color_code(val):
+                if val == 'OVERSOLD': return 'color: #00FF00; font-weight: bold'
+                elif val == 'NEAR 52W HIGH': return 'color: #FFA500; font-weight: bold'
+                elif val == 'GOLDEN CROSS': return 'color: #00FFFF; font-weight: bold'
+                return ''
             
-            # Interactive Data Table
             st.dataframe(
-                scan_df.style.applymap(lambda x: 'color: #FF4B4B' if 'OVERSOLD' in str(x) else ('color: #4CAF50' if 'UPTREND' in str(x) else ''), subset=['Signal']),
+                scan_df.style.applymap(color_code, subset=['Signal']),
                 use_container_width=True,
                 height=600
             )
-            
-            st.info("💡 **Signals Guide:**\n- **OVERSOLD:** RSI < 30. Potential buying opportunity (Dip).\n- **STRONG UPTREND:** Price > SMA50 > SMA200. Bullish momentum.\n- **DOWNTREND:** Price < SMA200. Bearish.")
 
 # =========================================
-# MODE 3: REPORT GEN
+# MODE 3: PEER COMPARISON
+# =========================================
+elif mode == "🆚 Peer Comparison":
+    st.title("🆚 Peer Comparison Tool")
+    c1, c2 = st.columns(2)
+    with c1:
+        s1 = st.selectbox("Stock A", options=list(INDIAN_MARKET_MAP.keys()), index=0)
+    with c2:
+        s2 = st.selectbox("Stock B", options=list(INDIAN_MARKET_MAP.keys()), index=1)
+    
+    if st.button("Compare"):
+        t1, t2 = INDIAN_MARKET_MAP[s1], INDIAN_MARKET_MAP[s2]
+        i1 = yf.Ticker(t1).info
+        i2 = yf.Ticker(t2).info
+        
+        comp_data = {
+            "Metric": ["Price", "P/E Ratio", "Forward P/E", "PEG Ratio", "Profit Margins", "Debt/Equity", "Revenue Growth"],
+            s1: [
+                i1.get('currentPrice', 'N/A'), i1.get('trailingPE', 'N/A'), i1.get('forwardPE', 'N/A'),
+                i1.get('pegRatio', 'N/A'), f"{i1.get('profitMargins', 0)*100:.2f}%", i1.get('debtToEquity', 'N/A'),
+                f"{i1.get('revenueGrowth', 0)*100:.2f}%"
+            ],
+            s2: [
+                i2.get('currentPrice', 'N/A'), i2.get('trailingPE', 'N/A'), i2.get('forwardPE', 'N/A'),
+                i2.get('pegRatio', 'N/A'), f"{i2.get('profitMargins', 0)*100:.2f}%", i2.get('debtToEquity', 'N/A'),
+                f"{i2.get('revenueGrowth', 0)*100:.2f}%"
+            ]
+        }
+        st.dataframe(pd.DataFrame(comp_data), use_container_width=True)
+
+# =========================================
+# MODE 4: PORTFOLIO SIMULATOR
+# =========================================
+elif mode == "💼 Portfolio Sim":
+    st.title("💼 Paper Trading Simulator")
+    
+    # Add Trade
+    with st.expander("Add New Trade"):
+        c1, c2, c3 = st.columns(3)
+        p_name = c1.selectbox("Stock", options=list(INDIAN_MARKET_MAP.keys()))
+        p_qty = c2.number_input("Quantity", min_value=1, value=10)
+        p_price = c3.number_input("Avg Buy Price", min_value=1.0, value=1000.0)
+        if st.button("Add to Portfolio"):
+            st.session_state.portfolio.append({
+                "Symbol": INDIAN_MARKET_MAP[p_name],
+                "Name": p_name,
+                "Qty": p_qty,
+                "Buy Price": p_price
+            })
+            st.success(f"Added {p_name}")
+
+    # View Portfolio
+    if st.session_state.portfolio:
+        p_df = pd.DataFrame(st.session_state.portfolio)
+        
+        # Live Updates
+        current_prices = []
+        market_values = []
+        pnls = []
+        
+        for index, row in p_df.iterrows():
+            try:
+                cp = yf.Ticker(row['Symbol']).history(period="1d")['Close'].iloc[-1]
+                val = cp * row['Qty']
+                pnl = val - (row['Buy Price'] * row['Qty'])
+                
+                current_prices.append(cp)
+                market_values.append(val)
+                pnls.append(pnl)
+            except:
+                current_prices.append(0)
+                market_values.append(0)
+                pnls.append(0)
+        
+        p_df['Current Price'] = current_prices
+        p_df['Market Value'] = market_values
+        p_df['P&L'] = pnls
+        
+        st.dataframe(p_df, use_container_width=True)
+        
+        total_inv = (p_df['Buy Price'] * p_df['Qty']).sum()
+        total_val = p_df['Market Value'].sum()
+        total_pnl = p_df['P&L'].sum()
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Invested", f"₹{total_inv:,.2f}")
+        c2.metric("Current Value", f"₹{total_val:,.2f}")
+        c3.metric("Total P&L", f"₹{total_pnl:,.2f}", delta=f"{total_pnl:,.2f}")
+    else:
+        st.info("Your portfolio is empty. Add some trades above!")
+
+# =========================================
+# MODE 5: REPORT GEN
 # =========================================
 elif mode == "📑 Report Gen":
     ticker_obj = yf.Ticker(symbol)
