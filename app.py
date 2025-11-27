@@ -61,10 +61,16 @@ def load_data(symbol, start, end):
             df.columns = df.columns.get_level_values(0)
             
         # 2. Get Info (Fundamentals)
-        info = ticker_obj.info
+        try:
+            info = ticker_obj.info
+        except:
+            info = {}
         
         # 3. Get News
-        news = ticker_obj.news
+        try:
+            news = ticker_obj.news
+        except:
+            news = []
         
         return df, info, news
     except Exception as e:
@@ -72,8 +78,10 @@ def load_data(symbol, start, end):
 
 def calculate_technical_indicators(df):
     """Calculate SMA and EMA manually to avoid heavy dependencies."""
-    df['SMA_50'] = df['Close'].rolling(window=50).mean()
-    df['SMA_200'] = df['Close'].rolling(window=200).mean()
+    if len(df) > 50:
+        df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    if len(df) > 200:
+        df['SMA_200'] = df['Close'].rolling(window=200).mean()
     df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
     return df
 
@@ -110,8 +118,14 @@ if df is not None and not df.empty:
         st.title(f"{info.get('longName', symbol)}")
         st.markdown(f"**Sector:** {info.get('sector', 'N/A')} | **Industry:** {info.get('industry', 'N/A')}")
     with col_h2:
-        st.metric("Current Price", f"${df['Close'].iloc[-1]:.2f}", 
-                  f"{df['Close'].iloc[-1] - df['Close'].iloc[-2]:.2f}")
+        # Calculate Delta safely
+        try:
+            current = df['Close'].iloc[-1]
+            prev = df['Close'].iloc[-2]
+            delta = current - prev
+            st.metric("Current Price", f"${current:.2f}", f"{delta:.2f}")
+        except:
+            st.metric("Current Price", f"${df['Close'].iloc[-1]:.2f}", "0.00")
 
     # --- METRICS ROW ---
     m1, m2, m3, m4 = st.columns(4)
@@ -136,8 +150,9 @@ if df is not None and not df.empty:
                         name='Price'))
 
         # Add Indicators based on User Selection
-        if show_sma:
+        if show_sma and 'SMA_50' in df.columns:
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_50'], line=dict(color='orange', width=1), name='SMA 50'))
+        if show_sma and 'SMA_200' in df.columns:
             fig.add_trace(go.Scatter(x=df.index, y=df['SMA_200'], line=dict(color='blue', width=1), name='SMA 200'))
         
         if show_ema:
@@ -152,22 +167,38 @@ if df is not None and not df.empty:
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # Simulated AI Insight based on Simple Logic
+        # Simulated AI Insight
         last_close = df['Close'].iloc[-1]
-        sma_200 = df['SMA_200'].iloc[-1] if not pd.isna(df['SMA_200'].iloc[-1]) else last_close
+        sma_200 = df['SMA_200'].iloc[-1] if 'SMA_200' in df.columns and not pd.isna(df['SMA_200'].iloc[-1]) else last_close
         trend = "Bullish 🟢" if last_close > sma_200 else "Bearish 🔴"
         
         st.info(f"**AI Technical Check:** The stock is currently trading **{trend}** relative to its 200-day moving average.")
 
-    # TAB 2: NEWS FEED
+    # TAB 2: NEWS FEED (FIXED)
     with tab_news:
         st.subheader(f"News for {symbol}")
         if news:
-            for article in news[:5]:  # Show top 5 news
-                with st.container():
-                    st.markdown(f"**[{article['title']}]({article['link']})**")
-                    st.caption(f"Publisher: {article.get('publisher', 'Unknown')} | {datetime.fromtimestamp(article.get('providerPublishTime', 0)).strftime('%Y-%m-%d')}")
-                    st.markdown("---")
+            count = 0
+            for article in news:
+                if count >= 5: break
+                
+                # --- SAFE GET METHOD TO PREVENT KEYERROR ---
+                title = article.get('title', 'No Title Available')
+                link = article.get('link', '#')
+                publisher = article.get('publisher', 'Unknown Source')
+                pub_time = article.get('providerPublishTime', 0)
+                
+                # Only show if valid title exists
+                if title != 'No Title Available':
+                    with st.container():
+                        st.markdown(f"**[{title}]({link})**")
+                        try:
+                            date_str = datetime.fromtimestamp(pub_time).strftime('%Y-%m-%d %H:%M')
+                        except:
+                            date_str = "Recent"
+                        st.caption(f"{publisher} | {date_str}")
+                        st.markdown("---")
+                    count += 1
         else:
             st.write("No news found directly via API.")
 
