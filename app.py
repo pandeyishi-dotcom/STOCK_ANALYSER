@@ -1,14 +1,3 @@
-To make the Equity Research Report truly **institutional-grade**, I am adding three major analytical modules:
-
-1.  **Auto-Generated SWOT Analysis:** The AI will now scan the balance sheet and price action to categorize **Strengths, Weaknesses, Opportunities, and Threats**.
-2.  **Analyst Consensus & Target Price:** A visual comparison of the current price versus what Wall Street analysts predict (using `targetMeanPrice`).
-3.  **Risk Profile (VaR & Drawdown):** A dedicated section calculating the **Maximum Drawdown** (worst drop) and **Volatility** to warn you of risks.
-
-### Full Updated Code (`app.py`)
-
-Replace your entire file with this version.
-
-```python
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -403,4 +392,3 @@ elif mode == "📑 Report Gen":
                     pdf_data = create_pdf_bytes(symbol, info, rating, swot, risk, ival, currency_sym)
                     st.download_button("Download PDF Report", pdf_data, f"{symbol}_Report.pdf", "application/pdf", type='primary')
                 except Exception as e: st.error(f"PDF Error: {e}")
-```
