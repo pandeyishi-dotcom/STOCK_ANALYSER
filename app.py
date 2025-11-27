@@ -26,7 +26,7 @@ except LookupError:
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="FinTerminal India Pro",
+    page_title="FinTerminal India Ultimate",
     page_icon="🇮🇳",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -43,22 +43,23 @@ st.markdown("""
         hr { border: 0; border-top: 1px solid #30363D; }
         .neon-text { color: #C6F221; font-weight: bold; text-shadow: 0 0 5px rgba(198, 242, 33, 0.5); }
         
+        /* Metric Container */
         div[data-testid="metric-container"] {
             background-color: #161B22; border-left: 4px solid #C6F221;
             padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
+        
+        /* Scanner Tables */
+        .dataframe { font-size: 0.8rem !important; }
         
         /* Report Cards */
         .report-card {
             background-color: #161B22; padding: 20px; border-radius: 10px;
             border: 1px solid #30363D; margin-bottom: 15px;
         }
-        .swot-box {
-            padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 0.9rem;
-        }
+        .swot-box { padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 0.9rem; }
         .strength { background-color: #0f3d0f; border-left: 3px solid #238636; color: #e6ffec; }
         .weakness { background-color: #3d0f0f; border-left: 3px solid #da3633; color: #ffe6e6; }
-        
         .rating-badge { padding: 8px 20px; border-radius: 20px; font-weight: 900; font-size: 1.1rem; display: inline-block; }
         .buy { background-color: #238636; color: white; }
         .sell { background-color: #DA3633; color: white; }
@@ -78,15 +79,15 @@ st.markdown("""
 # --- MARKET MAPPING ---
 INDIAN_MARKET_MAP = {
     "Reliance Industries": "RELIANCE.NS",
-    "Tata Consultancy Services (TCS)": "TCS.NS",
+    "Tata Consultancy Services": "TCS.NS",
     "HDFC Bank": "HDFCBANK.NS",
-    "State Bank of India (SBI)": "SBIN.NS",
+    "State Bank of India": "SBIN.NS",
     "ICICI Bank": "ICICIBANK.NS",
     "Infosys": "INFY.NS",
     "Bharti Airtel": "BHARTIARTL.NS",
-    "Hindustan Unilever (HUL)": "HINDUNILVR.NS",
+    "Hindustan Unilever": "HINDUNILVR.NS",
     "ITC Limited": "ITC.NS",
-    "Larsen & Toubro (L&T)": "LT.NS",
+    "Larsen & Toubro": "LT.NS",
     "Tata Motors": "TATAMOTORS.NS",
     "Axis Bank": "AXISBANK.NS",
     "Sun Pharma": "SUNPHARMA.NS",
@@ -113,41 +114,20 @@ def sanitize_text(text):
     return text.encode('latin-1', 'replace').decode('latin-1')
 
 # --- DATA LOADERS ---
-
-@st.cache_data(ttl=300) # Cache for 5 mins
+@st.cache_data(ttl=300)
 def fetch_google_news(symbol):
-    """
-    Fallback: Fetches news from Google News RSS when yfinance fails.
-    """
     try:
-        # Clean symbol for search (SBIN.NS -> SBIN)
         search_term = symbol.replace('.NS', '').replace('.BO', '')
-        # Google News India RSS URL
         url = f"https://news.google.com/rss/search?q={search_term}+stock+news&hl=en-IN&gl=IN&ceid=IN:en"
-        
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers)
-        
-        # Parse XML
         root = ET.fromstring(response.content)
         news_items = []
-        
         for item in root.findall('./channel/item')[:10]:
-            title = item.find('title').text
-            link = item.find('link').text
-            pubDate = item.find('pubDate').text
-            # Basic cleanup of title
-            title = title.split(' - ')[0] 
-            
-            news_items.append({
-                'title': title,
-                'link': link,
-                'publisher': 'Google News',
-                'pubDate': pubDate
-            })
+            title = item.find('title').text.split(' - ')[0]
+            news_items.append({'title': title, 'link': item.find('link').text, 'publisher': 'Google News'})
         return news_items
-    except Exception as e:
-        return []
+    except: return []
 
 @st.cache_data(ttl=3600)
 def get_ticker_tape_data():
@@ -171,7 +151,59 @@ def load_historical_data(symbol, start, end):
         return df
     except: return None
 
-# --- ANALYSIS ENGINES ---
+# --- NEW: MARKET SCANNER ENGINE ---
+def run_market_scanner():
+    """Scans all stocks in the map for technical signals."""
+    scan_results = []
+    
+    # Progress Bar
+    progress_bar = st.progress(0)
+    total = len(INDIAN_MARKET_MAP)
+    
+    for i, (name, ticker) in enumerate(INDIAN_MARKET_MAP.items()):
+        try:
+            # Download minimal data (6 months is enough for scanner)
+            df = yf.download(ticker, period="6mo", progress=False)
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            
+            if not df.empty:
+                close = df['Close'].iloc[-1]
+                
+                # Indicators
+                sma50 = df['Close'].rolling(50).mean().iloc[-1]
+                sma200 = df['Close'].rolling(200).mean().iloc[-1]
+                
+                # RSI
+                delta = df['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / loss
+                rsi = 100 - (100 / (1 + rs))
+                rsi_val = rsi.iloc[-1]
+                
+                # Signals
+                signal = "NEUTRAL"
+                if rsi_val < 30: signal = "OVERSOLD (Buy?)"
+                elif rsi_val > 70: signal = "OVERBOUGHT"
+                elif sma50 > sma200 and close > sma50: signal = "STRONG UPTREND"
+                elif close < sma200: signal = "DOWNTREND"
+                
+                scan_results.append({
+                    "Stock": name,
+                    "Price": f"₹{close:.2f}",
+                    "RSI (14)": round(rsi_val, 1),
+                    "Trend": "Bullish 🟢" if close > sma200 else "Bearish 🔴",
+                    "Signal": signal
+                })
+        except: pass
+        
+        # Update progress
+        progress_bar.progress((i + 1) / total)
+        
+    progress_bar.empty()
+    return pd.DataFrame(scan_results)
+
+# --- RESEARCH ENGINE ---
 class ResearchEngine:
     def __init__(self, df, info, currency_sym):
         self.df = df
@@ -279,17 +311,19 @@ def create_pdf_bytes(ticker, info, rating, swot, risk, intrinsic_val, currency_s
 # =========================================
 with st.sidebar:
     st.markdown("<h1 class='neon-text'>FinTerminal India</h1>", unsafe_allow_html=True)
-    mode = st.radio("Mode:", ["📊 Dashboard", "📑 Report Gen"], label_visibility="collapsed")
+    # UPDATED MENU
+    mode = st.radio("Mode:", ["📊 Dashboard", "⚡ Market Scanner", "📑 Report Gen"], label_visibility="collapsed")
     st.markdown("---")
     
-    st.markdown("### 🔍 Select Company")
-    search_mode = st.checkbox("Manual Ticker Search", value=False)
-    if search_mode:
-        symbol = st.text_input("Enter Ticker", "SBIN.NS").upper()
-    else:
-        selected_name = st.selectbox("Popular Stocks", options=list(INDIAN_MARKET_MAP.keys()))
-        symbol = INDIAN_MARKET_MAP[selected_name]
-    currency_sym = get_currency_symbol(symbol)
+    if mode != "⚡ Market Scanner":
+        st.markdown("### 🔍 Select Company")
+        search_mode = st.checkbox("Manual Ticker Search", value=False)
+        if search_mode:
+            symbol = st.text_input("Enter Ticker", "SBIN.NS").upper()
+        else:
+            selected_name = st.selectbox("Popular Stocks", options=list(INDIAN_MARKET_MAP.keys()))
+            symbol = INDIAN_MARKET_MAP[selected_name]
+        currency_sym = get_currency_symbol(symbol)
     
     if mode == "📊 Dashboard":
         col1, col2 = st.columns(2)
@@ -298,35 +332,28 @@ with st.sidebar:
         st.markdown("### 📈 Settings")
         show_rsi = st.checkbox("Show RSI", value=True)
         show_sma = st.checkbox("Show SMA", value=True)
-    else:
+    elif mode == "📑 Report Gen":
         generate_btn = st.button("🚀 Generate Report", type="primary")
 
 st.markdown(get_ticker_tape_data(), unsafe_allow_html=True)
 
-# Fetch Basic Data
-ticker_obj = yf.Ticker(symbol)
-try: info = ticker_obj.info
-except: info = {}
-
-# --- INTELLIGENT NEWS FETCHING ---
-# 1. Try Yahoo Finance
-try: news = ticker_obj.news
-except: news = []
-
-# 2. Filter Bad Yahoo Data
-valid_news = []
-if news:
-    for n in news:
-        if n.get('title') and n.get('link'):
-            valid_news.append(n)
-
-# 3. Fallback to Google News if Yahoo failed
-if len(valid_news) < 3:
-    # st.toast("Fetching Google News...") # Optional notification
-    valid_news = fetch_google_news(symbol)
-
-# --- DASHBOARD MODE ---
+# =========================================
+# MODE 1: DASHBOARD
+# =========================================
 if mode == "📊 Dashboard":
+    ticker_obj = yf.Ticker(symbol)
+    try: info = ticker_obj.info
+    except: info = {}
+    
+    # News Logic
+    try: news = ticker_obj.news
+    except: news = []
+    valid_news = []
+    if news:
+        for n in news:
+            if n.get('title') and n.get('link'): valid_news.append(n)
+    if len(valid_news) < 3: valid_news = fetch_google_news(symbol)
+
     df = load_historical_data(symbol, start_date, end_date)
     if df is not None and not df.empty:
         c1, c2 = st.columns([3, 1])
@@ -353,26 +380,46 @@ if mode == "📊 Dashboard":
             st.subheader("Balance Sheet")
             try: st.dataframe(ticker_obj.balance_sheet.iloc[:, :2], use_container_width=True)
             except: st.info("Data unavailable")
-        
-        # --- FIXED NEWS TAB ---
         with t3:
             if valid_news:
                 for a in valid_news[:10]:
-                    # Sentiment Analysis
                     try: s = SentimentIntensityAnalyzer().polarity_scores(a['title'])['compound']
                     except: s = 0.0
                     mood = "🟢" if s > 0.05 else "🔴" if s < -0.05 else "⚪"
-                    
                     st.markdown(f"{mood} **[{a['title']}]({a['link']})**")
                     st.caption(f"Source: {a.get('publisher', 'Google News')} | AI Score: {s:.2f}")
                     st.divider()
-            else:
-                st.warning("No news found.")
-                
+            else: st.warning("No news found.")
     else: st.error("No Data.")
 
-# --- REPORT MODE ---
+# =========================================
+# MODE 2: MARKET SCANNER
+# =========================================
+elif mode == "⚡ Market Scanner":
+    st.title("⚡ AI Market Scanner")
+    st.caption("Scanning 20+ Top Indian Stocks for Technical Signals...")
+    
+    if st.button("Start Scan", type="primary"):
+        with st.spinner("Scanning market data... this may take 20-30 seconds."):
+            scan_df = run_market_scanner()
+            
+            # Interactive Data Table
+            st.dataframe(
+                scan_df.style.applymap(lambda x: 'color: #FF4B4B' if 'OVERSOLD' in str(x) else ('color: #4CAF50' if 'UPTREND' in str(x) else ''), subset=['Signal']),
+                use_container_width=True,
+                height=600
+            )
+            
+            st.info("💡 **Signals Guide:**\n- **OVERSOLD:** RSI < 30. Potential buying opportunity (Dip).\n- **STRONG UPTREND:** Price > SMA50 > SMA200. Bullish momentum.\n- **DOWNTREND:** Price < SMA200. Bearish.")
+
+# =========================================
+# MODE 3: REPORT GEN
+# =========================================
 elif mode == "📑 Report Gen":
+    ticker_obj = yf.Ticker(symbol)
+    try: info = ticker_obj.info
+    except: info = {}
+    
     if generate_btn:
         with st.spinner("Running Advanced Analysis..."):
             df_rep = load_historical_data(symbol, datetime.now()-timedelta(days=400), datetime.now())
