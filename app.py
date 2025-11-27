@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 from sklearn.linear_model import LinearRegression
 from scipy.stats import norm
 
-# --- NLTK SETUP (Cloud Robust) ---
+# --- NLTK SETUP ---
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
@@ -38,34 +38,20 @@ st.set_page_config(
 # --- CUSTOM CSS ---
 st.markdown("""
     <style>
-        /* General Theme */
         .stApp { background-color: #0E1117; color: #FAFAFA; font-family: 'Roboto', sans-serif; }
         [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #222; }
-        
-        /* Typography */
         h1, h2, h3 { color: #C6F221 !important; }
         .stCaption { color: #8B949E !important; }
         hr { border: 0; border-top: 1px solid #30363D; }
         .neon-text { color: #C6F221; font-weight: bold; text-shadow: 0 0 5px rgba(198, 242, 33, 0.5); }
-        
-        /* Custom Widgets */
         .macro-box { background-color: #161B22; border: 1px solid #30363D; padding: 10px; border-radius: 5px; margin-bottom: 10px; text-align: center; }
         .macro-val { font-size: 1.1rem; font-weight: bold; color: #FAFAFA; }
         .macro-lbl { font-size: 0.8rem; color: #8B949E; }
-        
         div[data-testid="metric-container"] { background-color: #161B22; border-left: 4px solid #C6F221; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        
         .dataframe { font-size: 0.8rem !important; }
-        
-        /* Report Cards */
         .report-card { background-color: #161B22; padding: 20px; border-radius: 10px; border: 1px solid #30363D; margin-bottom: 15px; }
-        .swot-box { padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 0.9rem; }
-        .strength { background-color: #0f3d0f; border-left: 3px solid #238636; color: #e6ffec; }
-        .weakness { background-color: #3d0f0f; border-left: 3px solid #da3633; color: #ffe6e6; }
         .rating-badge { padding: 8px 20px; border-radius: 20px; font-weight: 900; font-size: 1.1rem; display: inline-block; }
         .buy { background-color: #238636; color: white; } .sell { background-color: #DA3633; color: white; } .hold { background-color: #D29922; color: black; }
-        
-        /* Ticker Tape */
         .ticker-wrap { width: 100%; overflow: hidden; background-color: #000; padding: 8px 0; white-space: nowrap; border-bottom: 2px solid #C6F221; }
         .ticker { display: inline-block; animation: marquee 45s linear infinite; }
         .ticker-item { display: inline-block; padding: 0 2rem; font-size: 1rem; color: #C6F221; font-family: 'Courier New', monospace; }
@@ -73,8 +59,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SESSION STATE ---
+# --- INITIALIZATION ---
 if 'portfolio' not in st.session_state: st.session_state.portfolio = []
+generate_btn = False # FIX: Initialize variable to prevent NameError
 
 # --- MAPS ---
 UI_MAP = {
@@ -145,7 +132,7 @@ def load_historical_data(symbol, start, end):
         return df
     except: return None
 
-# --- BLACK SCHOLES CALCULATOR ---
+# --- BLACK SCHOLES ---
 def black_scholes(S, K, T, r, sigma, option_type='call'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
     d2 = d1 - sigma * np.sqrt(T)
@@ -193,8 +180,6 @@ def run_market_scanner():
             if not df.empty:
                 close = df['Close'].iloc[-1]; high_52 = df['High'].max()
                 sma50 = df['Close'].rolling(50).mean().iloc[-1]; sma200 = df['Close'].rolling(200).mean().iloc[-1]
-                
-                # RSI
                 delta = df['Close'].diff(); gain = (delta.where(delta > 0, 0)).rolling(14).mean(); loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
                 rs = gain / loss; rsi = 100 - (100 / (1 + rs)); rsi_val = rsi.iloc[-1]
                 
@@ -288,8 +273,7 @@ with st.sidebar:
     st.markdown("---")
     
     # NAVIGATION
-    menu_options = ["📊 Dashboard", "🔮 AI Oracle & Sectors", "📉 Option Chain", "🧮 Option Calculator", "⚡ Market Scanner", "💼 Portfolio Sim", "📑 Report Gen"]
-    mode = st.selectbox("Menu:", menu_options)
+    mode = st.radio("Menu:", ["📊 Dashboard", "🔮 AI Oracle & Sectors", "📉 Option Chain", "🧮 Option Calculator", "⚡ Market Scanner", "💼 Portfolio Sim", "📑 Report Gen"])
     st.markdown("---")
     
     # Stock Selection
@@ -304,6 +288,10 @@ with st.sidebar:
         alert_price = st.number_input("Target Price", value=0.0)
         if alert_price > 0:
             st.caption(f"Alert active for {symbol if 'symbol' in locals() else 'Current'} > {alert_price}")
+            
+    # FIX: Define generate_btn in sidebar if in correct mode
+    if mode == "📑 Report Gen":
+        generate_btn = st.button("🚀 Generate Report", type="primary")
 
 st.markdown(get_ticker_tape_data(), unsafe_allow_html=True)
 
@@ -465,7 +453,7 @@ elif mode == "💼 Portfolio Sim":
         st.dataframe(df, use_container_width=True); st.metric("Total P&L", f"₹{df['P&L'].sum():,.2f}")
 
 # =========================================
-# MODE 7: REPORT GEN (FIXED BLANK SCREEN)
+# MODE 7: REPORT GEN
 # =========================================
 elif mode == "📑 Report Gen":
     ticker_obj = yf.Ticker(symbol)
@@ -474,18 +462,6 @@ elif mode == "📑 Report Gen":
     
     if not generate_btn:
         st.info(f"👈 Click **'Generate Report'** in the sidebar to analyze {symbol}.")
-        st.markdown(f"""
-        <div class="report-card" style="text-align: center; opacity: 0.7;">
-            <h2>Ready to Analyze: {info.get('longName', symbol)}</h2>
-            <p>The AI will generate:</p>
-            <ul style="list-style-type: none; padding: 0;">
-                <li>🛡️ SWOT Analysis</li>
-                <li>🎯 Intrinsic Value (DCF)</li>
-                <li>⚠️ Risk Profile</li>
-                <li>📑 PDF Export</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
     else:
         with st.spinner("Analyzing..."):
             df_rep = load_historical_data(symbol, datetime.now()-timedelta(days=400), datetime.now())
