@@ -12,7 +12,6 @@ import numpy as np
 import nltk
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
-# Define local path for NLTK data
 nltk_data_path = os.path.join(os.getcwd(), "nltk_data")
 if not os.path.exists(nltk_data_path):
     os.makedirs(nltk_data_path)
@@ -25,13 +24,13 @@ except LookupError:
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="FinTerminal India | AI Research",
+    page_title="FinTerminal India",
     page_icon="🇮🇳",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (DARK THEME) ---
+# --- CUSTOM CSS ---
 st.markdown("""
     <style>
         .stApp { background-color: #0E1117; color: #FAFAFA; font-family: 'Roboto', sans-serif; }
@@ -39,33 +38,19 @@ st.markdown("""
         h1, h2, h3 { color: #C6F221 !important; }
         .stCaption { color: #8B949E !important; }
         hr { border: 0; border-top: 1px solid #30363D; }
-        
-        /* Neon Accents */
         .neon-text { color: #C6F221; font-weight: bold; text-shadow: 0 0 5px rgba(198, 242, 33, 0.5); }
-        
-        /* Metric Card */
         div[data-testid="metric-container"] {
-            background-color: #161B22;
-            border-left: 4px solid #C6F221;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            background-color: #161B22; border-left: 4px solid #C6F221;
+            padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
-
-        /* Report Generator Styling */
         .report-container {
-            background-color: #161B22;
-            padding: 25px;
-            border-radius: 12px;
-            border: 1px solid #30363D;
-            margin-bottom: 20px;
+            background-color: #161B22; padding: 25px; border-radius: 12px;
+            border: 1px solid #30363D; margin-bottom: 20px;
         }
         .rating-badge { padding: 8px 20px; border-radius: 20px; font-weight: 900; font-size: 1.1rem; display: inline-block; }
         .buy { background-color: #238636; color: white; }
         .sell { background-color: #DA3633; color: white; }
         .hold { background-color: #D29922; color: black; }
-        
-        /* Ticker Tape */
         .ticker-wrap {
             width: 100%; overflow: hidden; background-color: #000;
             padding: 8px 0; white-space: nowrap; border-bottom: 2px solid #C6F221;
@@ -76,10 +61,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# =========================================
-# --- HELPER: INDIAN MARKET MAPPING ---
-# =========================================
-# This dictionary maps easy names to Ticker Symbols
+# --- MARKET MAPPING ---
 INDIAN_MARKET_MAP = {
     "Reliance Industries": "RELIANCE.NS",
     "Tata Consultancy Services (TCS)": "TCS.NS",
@@ -98,29 +80,19 @@ INDIAN_MARKET_MAP = {
     "Titan Company": "TITAN.NS",
     "Bajaj Finance": "BAJFINANCE.NS",
     "Asian Paints": "ASIANPAINT.NS",
-    "HCL Technologies": "HCLTECH.NS",
-    "Adani Enterprises": "ADANIENT.NS",
     "Mahindra & Mahindra": "M&M.NS",
     "Wipro": "WIPRO.NS",
-    "Coal India": "COALINDIA.NS",
     "Tata Steel": "TATASTEEL.NS",
     "Zomato": "ZOMATO.NS",
-    "Paytm (One97)": "PAYTM.NS",
-    "Ola Electric": "OLAELEC.NS",
-    "Vodafone Idea": "IDEA.NS",
-    "Yes Bank": "YESBANK.NS"
+    "Paytm": "PAYTM.NS",
+    "Vodafone Idea": "IDEA.NS"
 }
 
 def get_currency_symbol(ticker):
-    """Returns ₹ for Indian stocks, $ for others."""
-    if ticker.endswith(".NS") or ticker.endswith(".BO"):
-        return "₹"
+    if ticker.endswith(".NS") or ticker.endswith(".BO"): return "₹"
     return "$"
 
-# =========================================
-# --- LOGIC ENGINES ---
-# =========================================
-
+# --- ENGINES ---
 class ResearchEngine:
     def __init__(self, df, info, currency_sym):
         self.df = df
@@ -132,12 +104,9 @@ class ResearchEngine:
     def calculate_dcf(self):
         try:
             eps = self.info.get('trailingEps')
-            growth_rate = self.info.get('earningsGrowth', 0.10) # Assume 10% if missing
-            terminal_pe = 15 
+            growth = self.info.get('earningsGrowth', 0.10)
             if eps is None or eps <= 0: return 0
-            future_eps = eps * ((1 + growth_rate) ** 5)
-            fair_value = future_eps * terminal_pe
-            return fair_value
+            return eps * ((1 + growth) ** 5) * 15
         except: return 0
 
     def get_rating(self, intrinsic_value):
@@ -155,11 +124,11 @@ class ResearchEngine:
     def generate_thesis(self):
         reasons = []
         pe = self.info.get('trailingPE')
-        if pe: reasons.append(f"Trading at a P/E of {pe:.1f}x.")
-        if self.close > self.sma200: reasons.append("Technically in an uptrend (Above 200 DMA).")
-        else: reasons.append("Technically in a downtrend (Below 200 DMA).")
+        if pe: reasons.append(f"P/E Ratio is {pe:.1f}x.")
+        if self.close > self.sma200: reasons.append("Technically in Uptrend.")
+        else: reasons.append("Technically in Downtrend.")
         margins = self.info.get('profitMargins', 0)
-        reasons.append(f"Net Profit Margin is {margins*100:.1f}%.")
+        reasons.append(f"Net Margins: {margins*100:.1f}%.")
         return " ".join(reasons)
 
 class PDFReport(FPDF):
@@ -181,21 +150,17 @@ class PDFReport(FPDF):
         self.multi_cell(0, 5, body)
         self.ln()
 
-# =========================================
-# --- HELPER FUNCTIONS ---
-# =========================================
+# --- HELPERS ---
 @st.cache_data(ttl=3600)
 def get_ticker_tape_data():
     try:
-        # Focusing on Indian Indices for tape
-        tickers = ['^NSEI', '^BSESN', 'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INR=X']
+        tickers = ['^NSEI', '^BSESN', 'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS']
         data = yf.download(tickers, period="1d", interval="1m", progress=False)['Close'].iloc[-1]
         html = ""
         if isinstance(data, pd.Series):
              for t, p in data.items(): 
-                 # Pretty names
-                 name = "NIFTY 50" if t == '^NSEI' else "SENSEX" if t == '^BSESN' else "USD/INR" if t == 'INR=X' else t.replace('.NS','')
-                 html += f"<span class='ticker-item'>{name}: {p:,.2f}</span>"
+                 n = "NIFTY" if '^NSEI' in t else "SENSEX" if '^BSESN' in t else t.replace('.NS','')
+                 html += f"<span class='ticker-item'>{n}: {p:,.2f}</span>"
         return f"<div class='ticker-wrap'><div class='ticker'>{html}{html}</div></div>"
     except: return ""
 
@@ -207,31 +172,36 @@ def load_historical_data(symbol, start, end):
         return df
     except: return None
 
-def analyze_sentiment_vader(news_list):
-    if not news_list: return 0, "Neutral ⚪"
-    sia = SentimentIntensityAnalyzer()
-    scores = []
-    for article in news_list:
-        title = article.get('title')
-        if not title: continue
-        scores.append(sia.polarity_scores(title)['compound'])
-    avg = np.mean(scores) if scores else 0
-    if avg >= 0.05: return avg, "Bullish 🟢"
-    elif avg <= -0.05: return avg, "Bearish 🔴"
-    else: return avg, "Neutral ⚪"
+def sanitize_text(text):
+    """Replace non-latin characters for PDF generation."""
+    if not isinstance(text, str): return str(text)
+    # Replace Rupee symbol with 'Rs.' to prevent crash
+    text = text.replace("₹", "Rs. ")
+    # Encode to ASCII, ignore errors, decode back to remove weird hidden chars
+    return text.encode('latin-1', 'replace').decode('latin-1')
 
 def create_pdf_bytes(ticker, info, rating, thesis, intrinsic_val, currency_sym):
     pdf = PDFReport()
     pdf.add_page()
+    
+    # Sanitize Currency for PDF (Convert ₹ -> Rs.)
+    safe_curr = "Rs. " if currency_sym == "₹" else "$"
+    
     pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, f"{info.get('longName', ticker)}", 0, 1, 'L')
+    pdf.cell(0, 10, sanitize_text(f"{info.get('longName', ticker)}"), 0, 1, 'L')
     pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 8, f"Price: {currency_sym}{info.get('currentPrice', 'N/A')} | Recommendation: {rating}", 0, 1, 'L')
+    
+    price_txt = f"Price: {safe_curr}{info.get('currentPrice', 'N/A')} | Rec: {rating}"
+    pdf.cell(0, 8, sanitize_text(price_txt), 0, 1, 'L')
+    
     if intrinsic_val > 0:
-        pdf.cell(0, 8, f"Intrinsic Value (DCF): {currency_sym}{intrinsic_val:.2f}", 0, 1, 'L')
+        val_txt = f"Intrinsic Value: {safe_curr}{intrinsic_val:.2f}"
+        pdf.cell(0, 8, sanitize_text(val_txt), 0, 1, 'L')
     pdf.ln(5)
+    
     pdf.chapter_title("Investment Thesis")
-    pdf.chapter_body(thesis)
+    pdf.chapter_body(sanitize_text(thesis))
+    
     pdf.chapter_title("Key Fundamentals")
     pdf.set_font('Courier', '', 10)
     metrics = [
@@ -239,34 +209,29 @@ def create_pdf_bytes(ticker, info, rating, thesis, intrinsic_val, currency_sym):
         f"ROE:       {info.get('returnOnEquity', 0)*100:.2f}%",
         f"Profit Mgn:{info.get('profitMargins', 0)*100:.2f}%",
     ]
-    for m in metrics: pdf.cell(0, 5, m, 0, 1)
+    for m in metrics: pdf.cell(0, 5, sanitize_text(m), 0, 1)
+    
     pdf.ln(10)
     pdf.set_font('Arial', 'I', 8)
     pdf.multi_cell(0, 5, "Disclaimer: Automated report. Not financial advice.")
-    return pdf.output(dest='S').encode('latin-1', 'ignore')
+    
+    # Use latin-1 encoding with 'replace' to ensure robustness
+    return pdf.output(dest='S').encode('latin-1', 'replace')
 
-# =========================================
-# --- MAIN APP UI ---
-# =========================================
-
+# --- MAIN APP ---
 with st.sidebar:
     st.markdown("<h1 class='neon-text'>FinTerminal India</h1>", unsafe_allow_html=True)
     mode = st.radio("Mode:", ["📊 Dashboard", "📑 Report Gen"], label_visibility="collapsed")
     st.markdown("---")
     
-    # --- FIX 1: Searchable Dropdown for Indian Stocks ---
     st.markdown("### 🔍 Select Company")
     search_mode = st.checkbox("Manual Ticker Search", value=False)
-    
     if search_mode:
-        symbol = st.text_input("Enter Ticker (e.g. RELIANCE.NS)", "RELIANCE.NS").upper()
+        symbol = st.text_input("Enter Ticker", "RELIANCE.NS").upper()
     else:
-        # Dropdown with names
         selected_name = st.selectbox("Popular Stocks", options=list(INDIAN_MARKET_MAP.keys()))
         symbol = INDIAN_MARKET_MAP[selected_name]
-        st.caption(f"Ticker: {symbol}")
-
-    # Detect Currency Symbol
+    
     currency_sym = get_currency_symbol(symbol)
     
     if mode == "📊 Dashboard":
@@ -276,22 +241,16 @@ with st.sidebar:
         st.markdown("### 📈 Settings")
         show_rsi = st.checkbox("Show RSI", value=True)
         show_sma = st.checkbox("Show SMA", value=True)
-        
-    else: # Report Mode
+    else:
         generate_btn = st.button("🚀 Generate Report", type="primary")
 
-# Top Ticker Tape
 st.markdown(get_ticker_tape_data(), unsafe_allow_html=True)
-
 ticker_obj = yf.Ticker(symbol)
 try: info = ticker_obj.info
 except: info = {}
 try: news = ticker_obj.news
 except: news = []
 
-# =========================================
-# DASHBOARD MODE
-# =========================================
 if mode == "📊 Dashboard":
     df = load_historical_data(symbol, start_date, end_date)
     if df is not None and not df.empty:
@@ -300,19 +259,15 @@ if mode == "📊 Dashboard":
             st.title(info.get('shortName', symbol))
             st.caption(f"Sector: {info.get('sector', 'N/A')} | Industry: {info.get('industry', 'N/A')}")
         with c2:
-            # --- FIX 2: CURRENCY IN METRICS ---
-            current_price = df['Close'].iloc[-1]
-            delta = current_price - df['Close'].iloc[-2]
-            st.metric("Current Price", f"{currency_sym}{current_price:,.2f}", f"{delta:.2f}")
+            price = df['Close'].iloc[-1]
+            delta = price - df['Close'].iloc[-2]
+            st.metric("Price", f"{currency_sym}{price:,.2f}", f"{delta:.2f}")
 
-        # Charts
-        tab1, tab2, tab3 = st.tabs(["📈 Chart", "🏗 Fundamentals", "📰 News"])
-        
-        with tab1:
+        t1, t2, t3 = st.tabs(["Chart", "Fundamentals", "News"])
+        with t1:
             fig = make_subplots(rows=2 if show_rsi else 1, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3] if show_rsi else [1])
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=symbol, increasing_line_color='#C6F221', decreasing_line_color='#FF3B30'), row=1, col=1)
-            if show_sma:
-                fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(200).mean(), line=dict(color='#FFC107', width=1), name='200 DMA'), row=1, col=1)
+            if show_sma: fig.add_trace(go.Scatter(x=df.index, y=df['Close'].rolling(200).mean(), line=dict(color='#FFC107', width=1), name='200 DMA'), row=1, col=1)
             if show_rsi:
                 delta = df['Close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -324,37 +279,21 @@ if mode == "📊 Dashboard":
                 fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
             fig.update_layout(template="plotly_dark", height=600, paper_bgcolor='#161B22', plot_bgcolor='#161B22')
             st.plotly_chart(fig, use_container_width=True)
-
-        with tab2:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Market Cap", f"{currency_sym}{info.get('marketCap', 0)/1e7:,.0f} Cr")
-            c2.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
-            c3.metric("52W High", f"{currency_sym}{info.get('fiftyTwoWeekHigh', 0):,.2f}")
-            st.markdown("---")
-            st.subheader("Balance Sheet")
-            try: st.dataframe(ticker_obj.balance_sheet.iloc[:, :2], use_container_width=True)
-            except: st.info("Data unavailable")
-
-        with tab3:
+        with t2:
+            st.dataframe(ticker_obj.balance_sheet.iloc[:, :2], use_container_width=True)
+        with t3:
             if news:
-                valid = 0
-                for article in news:
-                    title = article.get('title')
-                    link = article.get('link')
-                    if not title or not link: continue
-                    if valid >= 7: break
-                    score = SentimentIntensityAnalyzer().polarity_scores(title)['compound']
-                    mood = "🟢" if score > 0.05 else "🔴" if score < -0.05 else "⚪"
-                    st.markdown(f"{mood} **[{title}]({link})**")
-                    st.divider()
-                    valid += 1
-                if valid == 0: st.info("No text news found.")
-            else: st.warning("No news found.")
-    else: st.error("Data not found.")
+                valid=0
+                for a in news:
+                    if not a.get('title') or not a.get('link'): continue
+                    if valid>=7: break
+                    s = SentimentIntensityAnalyzer().polarity_scores(a['title'])['compound']
+                    mood = "🟢" if s > 0.05 else "🔴" if s < -0.05 else "⚪"
+                    st.markdown(f"{mood} **[{a['title']}]({a['link']})**")
+                    valid+=1
+            else: st.info("No news.")
+    else: st.error("No data found.")
 
-# =========================================
-# REPORT MODE
-# =========================================
 elif mode == "📑 Report Gen":
     if generate_btn:
         with st.spinner("Analyzing..."):
@@ -371,24 +310,22 @@ elif mode == "📑 Report Gen":
                     <span class="rating-badge {r_cls}">{rating}</span>
                     <hr>
                     <div style="display:flex; justify-content:space-between;">
-                        <div>Current Price<br><b>{currency_sym}{info.get('currentPrice',0):,.2f}</b></div>
-                        <div>Intrinsic Value (DCF)<br><b>{currency_sym}{ival:,.2f}</b></div>
+                        <div>Current<br><b>{currency_sym}{info.get('currentPrice',0):,.2f}</b></div>
+                        <div>Intrinsic<br><b>{currency_sym}{ival:,.2f}</b></div>
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                c1, c2 = st.columns([2,1])
-                with c1:
-                    st.markdown('<div class="report-container">', unsafe_allow_html=True)
-                    st.subheader("Investment Thesis")
-                    st.write(thesis)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                with c2:
-                    st.markdown('<div class="report-container">', unsafe_allow_html=True)
-                    st.subheader("Key Ratios")
+                col1, col2 = st.columns([2,1])
+                with col1:
+                    st.markdown(f"**Thesis:** {thesis}")
+                with col2:
                     st.write(f"**P/E:** {info.get('trailingPE', 'N/A')}")
                     st.write(f"**ROE:** {info.get('returnOnEquity', 0)*100:.2f}%")
-                    st.markdown('</div>', unsafe_allow_html=True)
                 
-                pdf_data = create_pdf_bytes(symbol, info, rating, thesis, ival, currency_sym)
-                st.download_button("Download PDF", pdf_data, f"{symbol}_Report.pdf", "application/pdf", type='primary')
+                # PDF GENERATION (SAFE MODE)
+                try:
+                    pdf_data = create_pdf_bytes(symbol, info, rating, thesis, ival, currency_sym)
+                    st.download_button("Download PDF", pdf_data, f"{symbol}_Report.pdf", "application/pdf", type='primary')
+                except Exception as e:
+                    st.error(f"PDF Error: {e}")
