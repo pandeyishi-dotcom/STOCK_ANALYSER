@@ -4,3 +4,6 @@ yfinance
 plotly
 nltk
 fpdf
+scipy
+scikit-learn
+requests
