@@ -38,20 +38,36 @@ st.set_page_config(
 # --- CUSTOM CSS ---
 st.markdown("""
     <style>
+        /* General Theme */
         .stApp { background-color: #0E1117; color: #FAFAFA; font-family: 'Roboto', sans-serif; }
         [data-testid="stSidebar"] { background-color: #050505; border-right: 1px solid #222; }
+        
+        /* Typography */
         h1, h2, h3 { color: #C6F221 !important; }
         .stCaption { color: #8B949E !important; }
         hr { border: 0; border-top: 1px solid #30363D; }
         .neon-text { color: #C6F221; font-weight: bold; text-shadow: 0 0 5px rgba(198, 242, 33, 0.5); }
+        
+        /* Custom Widgets */
         .macro-box { background-color: #161B22; border: 1px solid #30363D; padding: 10px; border-radius: 5px; margin-bottom: 10px; text-align: center; }
         .macro-val { font-size: 1.1rem; font-weight: bold; color: #FAFAFA; }
         .macro-lbl { font-size: 0.8rem; color: #8B949E; }
+        
         div[data-testid="metric-container"] { background-color: #161B22; border-left: 4px solid #C6F221; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        
         .dataframe { font-size: 0.8rem !important; }
+        
+        /* Report Cards */
         .report-card { background-color: #161B22; padding: 20px; border-radius: 10px; border: 1px solid #30363D; margin-bottom: 15px; }
+        .swot-box { padding: 10px; border-radius: 5px; margin-bottom: 5px; font-size: 0.9rem; }
+        .strength { background-color: #0f3d0f; border-left: 3px solid #238636; color: #e6ffec; }
+        .weakness { background-color: #3d0f0f; border-left: 3px solid #da3633; color: #ffe6e6; }
+        .eic-header { font-size: 1.2rem; font-weight: bold; color: #C6F221; margin-top: 10px; border-bottom: 1px solid #444; padding-bottom: 5px; }
+        
         .rating-badge { padding: 8px 20px; border-radius: 20px; font-weight: 900; font-size: 1.1rem; display: inline-block; }
         .buy { background-color: #238636; color: white; } .sell { background-color: #DA3633; color: white; } .hold { background-color: #D29922; color: black; }
+        
+        /* Ticker Tape */
         .ticker-wrap { width: 100%; overflow: hidden; background-color: #000; padding: 8px 0; white-space: nowrap; border-bottom: 2px solid #C6F221; }
         .ticker { display: inline-block; animation: marquee 45s linear infinite; }
         .ticker-item { display: inline-block; padding: 0 2rem; font-size: 1rem; color: #C6F221; font-family: 'Courier New', monospace; }
@@ -59,9 +75,9 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- INITIALIZATION ---
+# --- SESSION STATE ---
 if 'portfolio' not in st.session_state: st.session_state.portfolio = []
-generate_btn = False # FIX: Initialize variable to prevent NameError
+generate_btn = False 
 
 # --- MAPS ---
 UI_MAP = {
@@ -151,9 +167,7 @@ def run_sector_analysis():
                 if sector not in sector_perf: sector_perf[sector] = []
                 sector_perf[sector].append(change)
         except: pass
-    data = []
-    for s, c in sector_perf.items():
-        data.append({"Sector": s, "Change": np.mean(c)})
+    data = [{"Sector": s, "Change": np.mean(c)} for s, c in sector_perf.items()]
     return pd.DataFrame(data)
 
 def predict_stock_price(symbol, days=7):
@@ -180,6 +194,8 @@ def run_market_scanner():
             if not df.empty:
                 close = df['Close'].iloc[-1]; high_52 = df['High'].max()
                 sma50 = df['Close'].rolling(50).mean().iloc[-1]; sma200 = df['Close'].rolling(200).mean().iloc[-1]
+                
+                # RSI
                 delta = df['Close'].diff(); gain = (delta.where(delta > 0, 0)).rolling(14).mean(); loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
                 rs = gain / loss; rsi = 100 - (100 / (1 + rs)); rsi_val = rsi.iloc[-1]
                 
@@ -193,7 +209,7 @@ def run_market_scanner():
     prog.empty()
     return pd.DataFrame(results)
 
-# --- RESEARCH ENGINE & PDF ---
+# --- RESEARCH ENGINE (EIC Analysis) ---
 class ResearchEngine:
     def __init__(self, df, info, currency_sym):
         self.df = df
@@ -201,12 +217,63 @@ class ResearchEngine:
         self.currency = currency_sym
         self.close = df['Close'].iloc[-1] if not df.empty else 0
         self.sma200 = df['Close'].rolling(200).mean().iloc[-1] if not df.empty else 0
+        self.ticker = info.get('symbol', 'UNKNOWN')
+
+    def analyze_economy(self):
+        """Analyzes NIFTY 50 trend for Economy section."""
+        try:
+            nifty = yf.download('^NSEI', period='1y', progress=False)
+            if isinstance(nifty.columns, pd.MultiIndex): nifty.columns = nifty.columns.get_level_values(0)
+            nifty_close = nifty['Close'].iloc[-1]
+            nifty_sma200 = nifty['Close'].rolling(200).mean().iloc[-1]
+            
+            trend = "Bullish" if nifty_close > nifty_sma200 else "Bearish"
+            return f"The Indian Economy (NIFTY 50) is in a **{trend}** phase technically. The index is trading {'above' if trend=='Bullish' else 'below'} its 200-day moving average, signaling broad market sentiment."
+        except:
+            return "Macro-economic data unavailable."
+
+    def analyze_industry(self):
+        """Compares stock to its sector peers."""
+        sector = STOCK_SECTOR_MAP.get(self.ticker, "General")
+        peers = [t for t, s in STOCK_SECTOR_MAP.items() if s == sector and t != self.ticker]
+        
+        if not peers: return f"Sector: {sector}. No direct peers mapped for relative comparison."
+        
+        # Simple relative strength check
+        outperformance = "Inline"
+        try:
+            my_ret = (self.close - self.df['Close'].iloc[0]) / self.df['Close'].iloc[0]
+            # Check 1 peer for speed
+            peer_df = yf.download(peers[0], period='1y', progress=False)
+            if isinstance(peer_df.columns, pd.MultiIndex): peer_df.columns = peer_df.columns.get_level_values(0)
+            peer_ret = (peer_df['Close'].iloc[-1] - peer_df['Close'].iloc[0]) / peer_df['Close'].iloc[0]
+            
+            if my_ret > peer_ret + 0.10: outperformance = "Leader"
+            elif my_ret < peer_ret - 0.10: outperformance = "Laggard"
+        except: pass
+        
+        return f"Sector: **{sector}**. This stock appears to be a **{outperformance}** relative to peers like {peers[0].replace('.NS','')}. Institutional interest in {sector} remains key."
+
+    def calculate_quality_score(self):
+        """Piotroski-style Score (0-10)"""
+        score = 0
+        try:
+            if self.info.get('returnOnEquity', 0) > 0.15: score += 2
+            if self.info.get('profitMargins', 0) > 0.15: score += 2
+            if self.info.get('revenueGrowth', 0) > 0.10: score += 1
+            if self.info.get('currentRatio', 0) > 1.0: score += 1
+            if self.info.get('debtToEquity', 100) < 50: score += 2
+            if self.close > self.sma200: score += 2
+        except: pass
+        return score
+
     def calculate_dcf(self):
         try:
             eps = self.info.get('trailingEps'); growth = self.info.get('earningsGrowth', 0.10)
             if eps is None or eps <= 0: return 0
             return eps * ((1 + growth) ** 5) * 15
         except: return 0
+
     def get_rating(self, intrinsic_value):
         score = 0
         if self.close > self.sma200: score += 1
@@ -217,15 +284,17 @@ class ResearchEngine:
         elif score >= 1.5: return "BUY", "buy"
         elif score >= 0.5: return "HOLD", "hold"
         else: return "SELL", "sell"
+
     def generate_swot(self):
         swot = {"Strengths": [], "Weaknesses": [], "Opportunities": [], "Threats": []}
         if self.info.get('profitMargins', 0) > 0.15: swot['Strengths'].append("High Profit Margins (>15%)")
         if self.close > self.sma200: swot['Strengths'].append("Bullish Technical Trend")
         if self.info.get('debtToEquity', 0) > 150: swot['Weaknesses'].append("High Debt Levels")
-        if self.info.get('earningsGrowth', 0) > 0.20: swot['Opportunities'].append("High Earnings Growth Potential")
+        if self.info.get('earningsGrowth', 0) > 0.20: swot['Opportunities'].append("High Earnings Growth")
         if self.info.get('beta', 1.0) > 1.5: swot['Threats'].append("High Volatility")
         if not swot['Strengths']: swot['Strengths'].append("Stable Market Position")
         return swot
+
     def get_risk_metrics(self):
         if self.df.empty: return {}
         rolling_max = self.df['Close'].cummax()
@@ -243,10 +312,18 @@ class PDFReport(FPDF):
     def chapter_body(self, body):
         self.set_font('Arial', '', 10); self.multi_cell(0, 5, body); self.ln()
 
-def create_pdf_bytes(ticker, info, rating, swot, risk, intrinsic_val, currency_sym):
+def create_pdf_bytes(ticker, info, rating, swot, risk, intrinsic_val, currency_sym, eic_text):
     pdf = PDFReport(); pdf.add_page(); safe_curr = "Rs. " if currency_sym == "₹" else "$"
     pdf.set_font('Arial', 'B', 16); pdf.cell(0, 10, sanitize_text(f"{info.get('longName', ticker)}"), 0, 1, 'L')
     pdf.set_font('Arial', '', 12); pdf.cell(0, 8, sanitize_text(f"Price: {safe_curr}{info.get('currentPrice', 'N/A')} | Rating: {rating}"), 0, 1, 'L'); pdf.ln(5)
+    
+    # EIC Section
+    pdf.chapter_title("EIC Analysis")
+    pdf.chapter_body(sanitize_text(f"Economy: {eic_text['E']}"))
+    pdf.chapter_body(sanitize_text(f"Industry: {eic_text['I']}"))
+    pdf.chapter_body(sanitize_text(f"Company: {eic_text['C']}"))
+    
+    # SWOT
     pdf.chapter_title("SWOT Analysis")
     pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, "Strengths:", 0, 1)
     pdf.set_font('Arial', '', 10); 
@@ -255,6 +332,8 @@ def create_pdf_bytes(ticker, info, rating, swot, risk, intrinsic_val, currency_s
     pdf.set_font('Arial', '', 10); 
     for w in swot['Weaknesses']: pdf.cell(0, 5, f"- {w}", 0, 1)
     pdf.ln(5)
+    
+    # Risk
     pdf.chapter_title("Risk Profile"); pdf.cell(0, 5, f"Max Drawdown: {risk.get('Max Drawdown')}", 0, 1); pdf.cell(0, 5, f"Volatility: {risk.get('Volatility')}", 0, 1); pdf.ln(5)
     pdf.ln(10); pdf.set_font('Arial', 'I', 8); pdf.multi_cell(0, 5, "Disclaimer: Automated report generated by AI. Not financial advice."); return pdf.output(dest='S').encode('latin-1', 'replace')
 
@@ -453,7 +532,7 @@ elif mode == "💼 Portfolio Sim":
         st.dataframe(df, use_container_width=True); st.metric("Total P&L", f"₹{df['P&L'].sum():,.2f}")
 
 # =========================================
-# MODE 7: REPORT GEN
+# MODE 7: REPORT GEN (EIC INCLUDED)
 # =========================================
 elif mode == "📑 Report Gen":
     ticker_obj = yf.Ticker(symbol)
@@ -463,18 +542,39 @@ elif mode == "📑 Report Gen":
     if not generate_btn:
         st.info(f"👈 Click **'Generate Report'** in the sidebar to analyze {symbol}.")
     else:
-        with st.spinner("Analyzing..."):
+        with st.spinner(f"Running Institutional Analysis on {symbol}..."):
             df_rep = load_historical_data(symbol, datetime.now()-timedelta(days=400), datetime.now())
             if df_rep is not None:
+                # EIC Engines
                 eng = ResearchEngine(df_rep, info, currency_sym)
                 ival = eng.calculate_dcf()
                 rating, r_cls = eng.get_rating(ival)
                 swot = eng.generate_swot()
                 risk = eng.get_risk_metrics()
+                quality = eng.calculate_quality_score()
+                
+                # Run EIC Text Gen
+                eic_text = {
+                    'E': eng.analyze_economy(),
+                    'I': eng.analyze_industry(),
+                    'C': f"Quality Score: {quality}/10. {eng.generate_swot()['Strengths'][0]}"
+                }
                 
                 st.markdown(f"""<div class="report-card"><h1>{info.get('longName', symbol)}</h1><span class="rating-badge {r_cls}">{rating}</span><hr><div style="display:flex; justify-content:space-between;"><div>Current Price<br><b>{currency_sym}{info.get('currentPrice',0):,.2f}</b></div><div>Target<br><b>{currency_sym}{info.get('targetMeanPrice', 'N/A')}</b></div><div>Intrinsic<br><b>{currency_sym}{ival:,.2f}</b></div></div></div>""", unsafe_allow_html=True)
+                
+                # EIC Section UI
+                st.markdown('<div class="report-card">', unsafe_allow_html=True)
+                st.markdown('<div class="eic-header">🌏 Economy</div>', unsafe_allow_html=True)
+                st.write(eic_text['E'])
+                st.markdown('<div class="eic-header">🏭 Industry</div>', unsafe_allow_html=True)
+                st.write(eic_text['I'])
+                st.markdown('<div class="eic-header">🏢 Company</div>', unsafe_allow_html=True)
+                st.write(eic_text['C'])
+                st.markdown('</div>', unsafe_allow_html=True)
+                
                 c1, c2 = st.columns(2)
                 with c1: st.subheader("🛡 SWOT"); st.write(swot)
                 with c2: st.subheader("⚠️ Risk"); st.write(risk)
-                try: pdf = create_pdf_bytes(symbol, info, rating, swot, risk, ival, currency_sym); st.download_button("Download PDF", pdf, f"{symbol}_Report.pdf", "application/pdf", type='primary')
+                
+                try: pdf = create_pdf_bytes(symbol, info, rating, swot, risk, ival, currency_sym, eic_text); st.download_button("Download PDF", pdf, f"{symbol}_Report.pdf", "application/pdf", type='primary')
                 except Exception as e: st.error(f"PDF Error: {e}")
