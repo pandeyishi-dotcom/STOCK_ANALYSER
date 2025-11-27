@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import os
 from fpdf import FPDF
 import numpy as np
+import requests
+import xml.etree.ElementTree as ET
 
 # --- NLTK SETUP ---
 import nltk
@@ -78,10 +80,10 @@ INDIAN_MARKET_MAP = {
     "Reliance Industries": "RELIANCE.NS",
     "Tata Consultancy Services (TCS)": "TCS.NS",
     "HDFC Bank": "HDFCBANK.NS",
+    "State Bank of India (SBI)": "SBIN.NS",
     "ICICI Bank": "ICICIBANK.NS",
     "Infosys": "INFY.NS",
     "Bharti Airtel": "BHARTIARTL.NS",
-    "State Bank of India (SBI)": "SBIN.NS",
     "Hindustan Unilever (HUL)": "HINDUNILVR.NS",
     "ITC Limited": "ITC.NS",
     "Larsen & Toubro (L&T)": "LT.NS",
@@ -110,7 +112,43 @@ def sanitize_text(text):
     text = text.replace("₹", "Rs. ").replace("’", "'").replace("“", '"').replace("”", '"').replace("–", "-")
     return text.encode('latin-1', 'replace').decode('latin-1')
 
-# --- CACHED DATA LOADERS ---
+# --- DATA LOADERS ---
+
+@st.cache_data(ttl=300) # Cache for 5 mins
+def fetch_google_news(symbol):
+    """
+    Fallback: Fetches news from Google News RSS when yfinance fails.
+    """
+    try:
+        # Clean symbol for search (SBIN.NS -> SBIN)
+        search_term = symbol.replace('.NS', '').replace('.BO', '')
+        # Google News India RSS URL
+        url = f"https://news.google.com/rss/search?q={search_term}+stock+news&hl=en-IN&gl=IN&ceid=IN:en"
+        
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers)
+        
+        # Parse XML
+        root = ET.fromstring(response.content)
+        news_items = []
+        
+        for item in root.findall('./channel/item')[:10]:
+            title = item.find('title').text
+            link = item.find('link').text
+            pubDate = item.find('pubDate').text
+            # Basic cleanup of title
+            title = title.split(' - ')[0] 
+            
+            news_items.append({
+                'title': title,
+                'link': link,
+                'publisher': 'Google News',
+                'pubDate': pubDate
+            })
+        return news_items
+    except Exception as e:
+        return []
+
 @st.cache_data(ttl=3600)
 def get_ticker_tape_data():
     try:
@@ -133,7 +171,7 @@ def load_historical_data(symbol, start, end):
         return df
     except: return None
 
-# --- ADVANCED RESEARCH ENGINE ---
+# --- ANALYSIS ENGINES ---
 class ResearchEngine:
     def __init__(self, df, info, currency_sym):
         self.df = df
@@ -163,47 +201,26 @@ class ResearchEngine:
         else: return "SELL", "sell"
 
     def generate_swot(self):
-        """Generates a dynamic SWOT analysis."""
         swot = {"Strengths": [], "Weaknesses": [], "Opportunities": [], "Threats": []}
-        
-        # Strengths
         if self.info.get('profitMargins', 0) > 0.15: swot['Strengths'].append("High Profit Margins (>15%)")
         if self.info.get('returnOnEquity', 0) > 0.15: swot['Strengths'].append("Strong ROE (>15%)")
-        if self.close > self.sma200: swot['Strengths'].append("Bullish Technical Trend (Above 200 DMA)")
-        
-        # Weaknesses
-        if self.info.get('debtToEquity', 0) > 150: swot['Weaknesses'].append("High Debt Levels (>150% D/E)")
-        if self.info.get('trailingPE', 0) > 50: swot['Weaknesses'].append("Expensive Valuation (P/E > 50)")
-        
-        # Opportunities
+        if self.close > self.sma200: swot['Strengths'].append("Bullish Technical Trend")
+        if self.info.get('debtToEquity', 0) > 150: swot['Weaknesses'].append("High Debt Levels")
+        if self.info.get('trailingPE', 0) > 50: swot['Weaknesses'].append("Expensive Valuation")
         if self.info.get('earningsGrowth', 0) > 0.20: swot['Opportunities'].append("High Earnings Growth Potential")
-        if self.info.get('pegRatio', 5) < 1.0: swot['Opportunities'].append("Undervalued relative to growth (PEG < 1)")
-        
-        # Threats
-        if self.info.get('beta', 1.0) > 1.5: swot['Threats'].append("High Volatility (Beta > 1.5)")
-        if self.info.get('shortRatio', 0) > 5: swot['Threats'].append("Rising Short Interest")
-        
-        # Defaults if empty
-        if not swot['Strengths']: swot['Strengths'].append("Stable Large Cap Status")
-        if not swot['Weaknesses']: swot['Weaknesses'].append("Moderate Growth Rates")
-        
+        if self.info.get('beta', 1.0) > 1.5: swot['Threats'].append("High Volatility")
+        if not swot['Strengths']: swot['Strengths'].append("Stable Market Position")
+        if not swot['Weaknesses']: swot['Weaknesses'].append("Moderate Growth")
         return swot
 
     def get_risk_metrics(self):
-        """Calculates Max Drawdown and Volatility."""
         if self.df.empty: return {}
-        
-        # Max Drawdown
         rolling_max = self.df['Close'].cummax()
         drawdown = (self.df['Close'] - rolling_max) / rolling_max
-        max_drawdown = drawdown.min()
-        
-        # Volatility (Annualized)
         daily_ret = self.df['Close'].pct_change()
         volatility = daily_ret.std() * np.sqrt(252)
-        
         return {
-            "Max Drawdown": f"{max_drawdown*100:.2f}%",
+            "Max Drawdown": f"{drawdown.min()*100:.2f}%",
             "Volatility": f"{volatility*100:.2f}%",
             "Beta": self.info.get('beta', 'N/A')
         }
@@ -232,39 +249,29 @@ def create_pdf_bytes(ticker, info, rating, swot, risk, intrinsic_val, currency_s
     pdf = PDFReport()
     pdf.add_page()
     safe_curr = "Rs. " if currency_sym == "₹" else "$"
-    
-    # Header
     pdf.set_font('Arial', 'B', 16)
     pdf.cell(0, 10, sanitize_text(f"{info.get('longName', ticker)}"), 0, 1, 'L')
     pdf.set_font('Arial', '', 12)
     pdf.cell(0, 8, sanitize_text(f"Price: {safe_curr}{info.get('currentPrice', 'N/A')} | Rating: {rating}"), 0, 1, 'L')
     pdf.ln(5)
     
-    # SWOT Section
     pdf.chapter_title("SWOT Analysis")
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 5, "Strengths:", 0, 1)
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, "Strengths:", 0, 1)
+    pdf.set_font('Arial', '', 10); 
     for s in swot['Strengths']: pdf.cell(0, 5, f"- {s}", 0, 1)
-    
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(0, 5, "Weaknesses:", 0, 1)
-    pdf.set_font('Arial', '', 10)
+    pdf.set_font('Arial', 'B', 10); pdf.cell(0, 5, "Weaknesses:", 0, 1)
+    pdf.set_font('Arial', '', 10); 
     for w in swot['Weaknesses']: pdf.cell(0, 5, f"- {w}", 0, 1)
     pdf.ln(5)
     
-    # Risk Section
     pdf.chapter_title("Risk Profile")
-    pdf.cell(0, 5, f"Max Drawdown (1Y): {risk['Max Drawdown']}", 0, 1)
-    pdf.cell(0, 5, f"Annual Volatility: {risk['Volatility']}", 0, 1)
-    pdf.cell(0, 5, f"Beta: {risk['Beta']}", 0, 1)
+    pdf.cell(0, 5, f"Max Drawdown: {risk.get('Max Drawdown')}", 0, 1)
+    pdf.cell(0, 5, f"Volatility: {risk.get('Volatility')}", 0, 1)
     pdf.ln(5)
-
-    # Disclaimer
+    
     pdf.ln(10)
     pdf.set_font('Arial', 'I', 8)
     pdf.multi_cell(0, 5, "Disclaimer: Automated report generated by AI. Not financial advice.")
-    
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # =========================================
@@ -278,7 +285,7 @@ with st.sidebar:
     st.markdown("### 🔍 Select Company")
     search_mode = st.checkbox("Manual Ticker Search", value=False)
     if search_mode:
-        symbol = st.text_input("Enter Ticker", "RELIANCE.NS").upper()
+        symbol = st.text_input("Enter Ticker", "SBIN.NS").upper()
     else:
         selected_name = st.selectbox("Popular Stocks", options=list(INDIAN_MARKET_MAP.keys()))
         symbol = INDIAN_MARKET_MAP[selected_name]
@@ -295,11 +302,28 @@ with st.sidebar:
         generate_btn = st.button("🚀 Generate Report", type="primary")
 
 st.markdown(get_ticker_tape_data(), unsafe_allow_html=True)
+
+# Fetch Basic Data
 ticker_obj = yf.Ticker(symbol)
 try: info = ticker_obj.info
 except: info = {}
+
+# --- INTELLIGENT NEWS FETCHING ---
+# 1. Try Yahoo Finance
 try: news = ticker_obj.news
 except: news = []
+
+# 2. Filter Bad Yahoo Data
+valid_news = []
+if news:
+    for n in news:
+        if n.get('title') and n.get('link'):
+            valid_news.append(n)
+
+# 3. Fallback to Google News if Yahoo failed
+if len(valid_news) < 3:
+    # st.toast("Fetching Google News...") # Optional notification
+    valid_news = fetch_google_news(symbol)
 
 # --- DASHBOARD MODE ---
 if mode == "📊 Dashboard":
@@ -329,17 +353,22 @@ if mode == "📊 Dashboard":
             st.subheader("Balance Sheet")
             try: st.dataframe(ticker_obj.balance_sheet.iloc[:, :2], use_container_width=True)
             except: st.info("Data unavailable")
+        
+        # --- FIXED NEWS TAB ---
         with t3:
-            if news:
-                v=0
-                for a in news:
-                    if not a.get('title') or not a.get('link'): continue
-                    if v>=10: break
-                    try: s = SentimentIntensityAnalyzer().polarity_scores(a['title'])['compound']; m = "🟢" if s > 0.05 else "🔴" if s < -0.05 else "⚪"
-                    except: m="⚪"; s=0.0
-                    st.markdown(f"{m} **[{a['title']}]({a['link']})**"); st.caption(f"Score: {s:.2f}"); st.divider(); v+=1
-                if v==0: st.warning("Incomplete news data."); st.markdown(f"[Search Google News](https://www.google.com/search?q={symbol}+news)")
-            else: st.info("No news feed."); st.markdown(f"[Search Google News](https://www.google.com/search?q={symbol}+news)")
+            if valid_news:
+                for a in valid_news[:10]:
+                    # Sentiment Analysis
+                    try: s = SentimentIntensityAnalyzer().polarity_scores(a['title'])['compound']
+                    except: s = 0.0
+                    mood = "🟢" if s > 0.05 else "🔴" if s < -0.05 else "⚪"
+                    
+                    st.markdown(f"{mood} **[{a['title']}]({a['link']})**")
+                    st.caption(f"Source: {a.get('publisher', 'Google News')} | AI Score: {s:.2f}")
+                    st.divider()
+            else:
+                st.warning("No news found.")
+                
     else: st.error("No Data.")
 
 # --- REPORT MODE ---
@@ -354,7 +383,6 @@ elif mode == "📑 Report Gen":
                 swot = eng.generate_swot()
                 risk = eng.get_risk_metrics()
                 
-                # Header
                 st.markdown(f"""
                 <div class="report-card">
                     <h1>{info.get('longName', symbol)}</h1>
@@ -387,7 +415,6 @@ elif mode == "📑 Report Gen":
                     st.progress(min(info.get('payoutRatio', 0), 1.0), text=f"Dividend Payout: {info.get('payoutRatio',0)*100:.1f}%")
                     st.markdown('</div>', unsafe_allow_html=True)
                 
-                # PDF
                 try:
                     pdf_data = create_pdf_bytes(symbol, info, rating, swot, risk, ival, currency_sym)
                     st.download_button("Download PDF Report", pdf_data, f"{symbol}_Report.pdf", "application/pdf", type='primary')
